@@ -142,7 +142,7 @@ app.post('/api/rides/estimate', async (req, res) => {
   }
 });
 
-// ৩. RIDE REQUEST & ACTIVE RIDES
+// ৩. RIDE REQUEST, ACTIVE, ACCEPT, START & CANCEL
 app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
   const { vehicle_type, pickup_lat, pickup_lng, pickup_address, drop_lat, drop_lng, drop_address, estimated_fare, payment_method, promo_code } = req.body;
   try {
@@ -240,6 +240,22 @@ app.post('/api/rides/:id/start', auth(['DRIVER']), async (req, res) => {
   }
 });
 
+app.post('/api/rides/:id/cancel', auth(['RIDER', 'DRIVER']), async (req, res) => {
+  try {
+    const result = await pool.query(
+      "UPDATE rides SET status = 'CANCELLED' WHERE id = $1 AND status IN ('SEARCHING','ACCEPTED') RETURNING *",
+      [req.params.id]
+    );
+    if (!result.rows.length) return res.status(400).json({ error: 'রাইড বাতিল করা যাচ্ছে না' });
+    const ride = result.rows[0];
+    if (ride.driver_id) io.to(`driver_${ride.driver_id}`).emit('ride_cancelled', ride);
+    io.to(`rider_${ride.rider_id}`).emit('ride_cancelled', ride);
+    res.json({ ride });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ৪. COMPLETE RIDE (LIVE GPS FARE + WALLET + QUEST)
 app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
   const client = await pool.connect();
@@ -292,7 +308,6 @@ app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
       );
     }
 
-    // ড্রাইভার কোয়েস্ট বোনাস
     const activeQuests = await client.query('SELECT * FROM driver_quests WHERE is_active = TRUE AND start_time <= NOW() AND end_time >= NOW()');
     for (const quest of activeQuests.rows) {
       const progRes = await client.query(
@@ -488,4 +503,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));wq
