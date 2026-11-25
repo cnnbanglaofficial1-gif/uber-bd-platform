@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Uber BD - Admin Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+
+  <!-- LOGIN / REGISTER SCREEN -->
+  <div id="authBox" class="max-w-md mx-auto mt-14 p-6 bg-slate-900 rounded-2xl border border-slate-800 shadow-xl">
+    <h1 class="text-2xl font-bold text-emerald-400 text-center">🚗 Uber BD Admin</h1>
+    <p class="text-xs text-slate-400 text-center mt-1">ভাড়া, প্রমোশন ও ড্রাইভার ওয়ালেট কন্ট্রোল প্যানেল</p>
+
+    <div class="mt-6 space-y-3">
+      <input id="name" type="text" placeholder="আপনার নাম (নতুন একাউন্টের জন্য)" class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 text-sm" />
+      <input id="phone" type="text" placeholder="মোবাইল নম্বর (যেমন: 01700000000)" class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 text-sm" />
+      <input id="password" type="password" placeholder="পাসওয়ার্ড" class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 text-sm" />
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="login()" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 rounded-lg text-sm">লগইন করুন</button>
+        <button onclick="registerAdmin()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-lg text-sm">নতুন Admin তৈরি</button>
+      </div>
+      <p id="authMsg" class="text-xs text-amber-400 text-center pt-1"></p>
+    </div>
+  </div>
+
+  <!-- MAIN DASHBOARD -->
+  <div id="dashBox" class="hidden max-w-5xl mx-auto p-4 space-y-6">
+    <div class="flex justify-between items-center bg-slate-900 p-4 rounded-2xl border border-slate-800">
+      <div>
+        <h1 class="text-xl font-bold text-emerald-400">🚗 Uber BD Admin Panel</h1>
+        <p class="text-xs text-slate-400">Live Backend Connected</p>
+      </div>
+      <button onclick="logout()" class="bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-lg text-xs font-semibold">লগআউট</button>
+    </div>
+
+    <!-- STATS -->
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
+        <p class="text-xs text-slate-400">মোট রাইড (Total Rides)</p>
+        <p id="statRides" class="text-2xl font-bold text-white mt-1">0</p>
+      </div>
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-800">
+        <p class="text-xs text-slate-400">প্ল্যাটফর্ম কমিশন আয়</p>
+        <p id="statComm" class="text-2xl font-bold text-emerald-400 mt-1">৳ 0</p>
+      </div>
+    </div>
+
+    <!-- VEHICLE RATES -->
+    <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+      <h2 class="font-bold text-base mb-3 text-amber-400">⚙️ গাড়ির ভাড়া ও কমিশন সেটিংস</h2>
+      <div id="ratesList" class="grid md:grid-cols-3 gap-3"></div>
+    </div>
+
+    <!-- PROMOS & QUESTS -->
+    <div class="grid md:grid-cols-2 gap-4">
+      <!-- RIDER PROMO -->
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
+        <h2 class="font-bold text-base text-sky-400">🎟️ যাত্রী প্রমো কোড তৈরি</h2>
+        <input id="pCode" placeholder="কোড (যেমন: EID50)" class="w-full p-2.5 rounded bg-slate-800 border border-slate-700 text-sm" />
+        <div class="flex gap-2">
+          <select id="pType" class="p-2.5 rounded bg-slate-800 border border-slate-700 text-sm">
+            <option value="FIXED">Fixed (টাকা)</option>
+            <option value="PERCENT">Percent (%)</option>
+          </select>
+          <input id="pVal" type="number" placeholder="ছাড় (যেমন: 50)" class="flex-1 p-2.5 rounded bg-slate-800 border border-slate-700 text-sm" />
+        </div>
+        <button onclick="createPromo()" class="w-full bg-sky-500 text-slate-950 font-bold py-2.5 rounded-lg text-sm">প্রমো চালু করুন</button>
+        <div id="promosList" class="space-y-1 text-xs text-slate-300 pt-2"></div>
+      </div>
+
+      <!-- DRIVER QUEST -->
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
+        <h2 class="font-bold text-base text-purple-400">🏆 ড্রাইভার বোনাস (Quest) তৈরি</h2>
+        <input id="qTitle" placeholder="টাইটেল (যেমন: আজ ১০ ট্রিপে ৩০০৳ বোনাস)" class="w-full p-2.5 rounded bg-slate-800 border border-slate-700 text-sm" />
+        <div class="flex gap-2">
+          <input id="qTrips" type="number" placeholder="টার্গেট ট্রিপ (১০)" class="flex-1 p-2.5 rounded bg-slate-800 border border-slate-700 text-sm" />
+          <input id="qBonus" type="number" placeholder="বোনাস টাকা (৩০০)" class="flex-1 p-2.5 rounded bg-slate-800 border border-slate-700 text-sm" />
+        </div>
+        <button onclick="createQuest()" class="w-full bg-purple-500 text-slate-950 font-bold py-2.5 rounded-lg text-sm">ড্রাইভার অফার চালু করুন</button>
+        <div id="questsList" class="space-y-1 text-xs text-slate-300 pt-2"></div>
+      </div>
+    </div>
+
+    <!-- WITHDRAW REQUESTS -->
+    <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+      <h2 class="font-bold text-base mb-3 text-emerald-400">💸 ড্রাইভার বিকাশ / নগদ উইথড্র রিকোয়েস্ট</h2>
+      <div id="withdrawList" class="space-y-2 text-sm"></div>
+    </div>
+  </div>
+
+<script>
+  const API = 'https://uber-bd-platform.onrender.com';
+  let token = localStorage.getItem('admin_token') || '';
+
+  if (token) loadDashboard();
+
+  async function registerAdmin() {
+    setMsg('সার্ভারে কানেক্ট হচ্ছে (প্রথমবার ৩০ সেকেন্ড লাগতে পারে)...');
+    const res = await fetch(`${API}/api/auth/register`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name: val('name') || 'Super Admin', phone: val('phone'), password: val('password'), role: 'ADMIN' })
+    });
+    const data = await res.json();
+    if (data.token) { saveToken(data.token); } else { setMsg(data.error || 'Error'); }
+  }
+
+  async function login() {
+    setMsg('সার্ভারে কানেক্ট হচ্ছে...');
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ phone: val('phone'), password: val('password') })
+    });
+    const data = await res.json();
+    if (data.token && data.user.role === 'ADMIN') { saveToken(data.token); }
+    else { setMsg(data.error || 'Admin একাউন্ট হতে হবে'); }
+  }
+
+  function saveToken(t) { token = t; localStorage.setItem('admin_token', t); loadDashboard(); }
+  function logout() { localStorage.removeItem('admin_token'); location.reload(); }
+  function val(id) { return document.getElementById(id).value.trim(); }
+  function setMsg(m) { document.getElementById('authMsg').innerText = m; }
+
+  async function loadDashboard() {
+    document.getElementById('authBox').classList.add('hidden');
+    document.getElementById('dashBox').classList.remove('hidden');
+    const res = await fetch(`${API}/api/admin/overview`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401 || res.status === 403) return logout();
+    const d = await res.json();
+
+    document.getElementById('statRides').innerText = d.stats.total_rides;
+    document.getElementById('statComm').innerText = `৳ ${d.stats.total_commission}`;
+
+    document.getElementById('ratesList').innerHTML = d.rates.map(r => `
+      <div class="bg-slate-800 p-3 rounded-xl space-y-2 text-xs">
+        <div class="font-bold text-amber-300 text-sm">${r.vehicle_type}</div>
+        <div>Base: <input id="b_${r.vehicle_type}" value="${r.base_fare}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>Per KM: <input id="k_${r.vehicle_type}" value="${r.per_km_rate}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>Per Min: <input id="m_${r.vehicle_type}" value="${r.per_min_rate}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>Min Fare: <input id="mf_${r.vehicle_type}" value="${r.min_fare}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>Comm %: <input id="c_${r.vehicle_type}" value="${r.commission_percent}" class="w-16 bg-slate-900 p-1 rounded" /> %</div>
+        <button onclick="updateRate('${r.vehicle_type}')" class="w-full bg-amber-500 text-slate-950 font-bold py-1.5 rounded">আপডেট</button>
+      </div>
+    `).join('');
+
+    document.getElementById('promosList').innerHTML = d.promos.map(p => `
+      <div class="bg-slate-800 p-2 rounded flex justify-between">
+        <span><b>${p.code}</b> (${p.discount_value} ${p.discount_type})</span>
+        <span>ব্যবহৃত: ${p.used_count}/${p.usage_limit}</span>
+      </div>
+    `).join('') || '<p class="text-slate-500">কোনো প্রমো নেই</p>';
+
+    document.getElementById('questsList').innerHTML = d.quests.map(q => `
+      <div class="bg-slate-800 p-2 rounded flex justify-between">
+        <span><b>${q.title}</b></span>
+        <span class="text-purple-300">${q.target_trips} ট্রিপ = ৳${q.bonus_amount}</span>
+      </div>
+    `).join('') || '<p class="text-slate-500">কোনো অফার নেই</p>';
+
+    document.getElementById('withdrawList').innerHTML = d.withdraws.map(w => `
+      <div class="bg-slate-800 p-3 rounded-xl flex flex-wrap justify-between items-center gap-2">
+        <div>
+          <span class="font-bold">${w.name}</span> (${w.phone}) —
+          <span class="text-emerald-400 font-bold">৳${w.amount}</span> via <b>${w.method}</b> (${w.account_number})
+        </div>
+        <div>
+          ${w.status === 'PENDING'
+            ? `<button onclick="approveWithdraw(${w.id})" class="bg-emerald-500 text-slate-950 font-bold px-3 py-1 rounded text-xs">টাকা পাঠিয়ে Approve করুন</button>`
+            : `<span class="text-xs bg-emerald-900 text-emerald-300 px-2 py-1 rounded">${w.status} (${w.trx_id || ''})</span>`}
+        </div>
+      </div>
+    `).join('') || '<p class="text-slate-500 text-xs">কোনো উইথড্র রিকোয়েস্ট নেই</p>';
+  }
+
+  async function updateRate(t) {
+    await fetch(`${API}/api/admin/rates/${t}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify({
+        base_fare: val(`b_${t}`), per_km_rate: val(`k_${t}`),
+        per_min_rate: val(`m_${t}`), min_fare: val(`mf_${t}`), commission_percent: val(`c_${t}`)
+      })
+    });
+    alert(`${t} রেট আপডেট হয়েছে!`);
+  }
+
+  async function createPromo() {
+    await fetch(`${API}/api/admin/promos`, {
+      method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify({ code: val('pCode'), discount_type: val('pType'), discount_value: val('pVal') })
+    });
+    loadDashboard();
+  }
+
+  async function createQuest() {
+    const now = new Date();
+    const nextWeek = new Date(Date.now() + 7 * 86400000);
+    await fetch(`${API}/api/admin/quests`, {
+      method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify({ title: val('qTitle'), target_trips: val('qTrips'), bonus_amount: val('qBonus'), start_time: now, end_time: nextWeek })
+    });
+    loadDashboard();
+  }
+
+  async function approveWithdraw(id) {
+    const trx_id = prompt('বিকাশ/নগদ TrxID লিখুন:');
+    if (!trx_id) return;
+    await fetch(`${API}/api/admin/withdraws/${id}/approve`, {
+      method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify({ trx_id })
+    });
+    loadDashboard();
+  }
+</script>
+</body>
+</html>
