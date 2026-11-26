@@ -8,86 +8,64 @@
 </head>
 <body class="bg-[#0F172A] text-slate-100 min-h-screen font-sans">
 
-  <!-- AUTH -->
-  <div id="authBox" class="max-w-md mx-auto mt-16 p-7 bg-slate-900/90 rounded-3xl border border-slate-800 shadow-2xl">
-    <div class="w-16 h-16 mx-auto rounded-2xl bg-[#0F172A] border border-[#00D2B8]/40 flex items-center justify-center mb-3">
-      <span class="text-3xl font-black bg-gradient-to-r from-[#00D2B8] to-[#A3E635] bg-clip-text text-transparent">Z</span>
+  <div id="authBox" class="max-w-md mx-auto mt-16 p-7 bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl">
+    <div class="w-16 h-16 mx-auto rounded-2xl bg-[#0F172A] border border-[#00D2B8] flex items-center justify-center mb-3">
+      <span class="text-3xl font-black text-[#00D2B8]">Z</span>
     </div>
     <h1 class="text-2xl font-extrabold text-center text-white">Zoddir Admin</h1>
-    <p class="text-xs text-slate-400 text-center mt-1">রাইড, ড্রাইভার, ডকুমেন্ট ও পেমেন্ট কন্ট্রোল</p>
     <div class="mt-6 space-y-3">
-      <input id="name" type="text" placeholder="আপনার নাম (নতুন Admin-এর জন্য)" class="w-full p-3.5 rounded-xl bg-slate-800 border border-slate-700 text-sm focus:outline-none focus:border-[#00D2B8]" />
-      <input id="phone" type="text" placeholder="মোবাইল নম্বর" class="w-full p-3.5 rounded-xl bg-slate-800 border border-slate-700 text-sm focus:outline-none focus:border-[#00D2B8]" />
-      <input id="password" type="password" placeholder="পাসওয়ার্ড" class="w-full p-3.5 rounded-xl bg-slate-800 border border-slate-700 text-sm focus:outline-none focus:border-[#00D2B8]" />
+      <input id="name" type="text" placeholder="নাম" class="w-full p-3.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
+      <input id="phone" type="text" placeholder="মোবাইল নম্বর" class="w-full p-3.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
+      <input id="password" type="password" placeholder="পাসওয়ার্ড" class="w-full p-3.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
       <div class="flex gap-2 pt-2">
-        <button onclick="login()" class="flex-1 bg-[#00D2B8] hover:opacity-90 text-[#0F172A] font-extrabold py-3.5 rounded-xl text-sm">লগইন করুন</button>
-        <button onclick="registerAdmin()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3.5 rounded-xl text-sm border border-slate-700">নতুন Admin</button>
+        <button onclick="login()" class="flex-1 bg-[#00D2B8] text-[#0F172A] font-extrabold py-3.5 rounded-xl text-sm">লগইন</button>
+        <button onclick="registerAdmin()" class="flex-1 bg-slate-800 text-white font-semibold py-3.5 rounded-xl text-sm border border-slate-700">নতুন Admin</button>
       </div>
       <p id="authMsg" class="text-xs text-[#A3E635] text-center pt-1"></p>
     </div>
   </div>
 
-  <!-- DASHBOARD -->
   <div id="dashBox" class="hidden max-w-6xl mx-auto p-4 space-y-5">
     <div class="flex flex-wrap justify-between items-center gap-3 bg-slate-900 p-4 rounded-2xl border border-slate-800">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-xl bg-[#0F172A] border border-[#00D2B8] flex items-center justify-center font-black text-xl text-[#00D2B8]">Z</div>
-        <div>
-          <h1 class="text-lg font-extrabold text-white">Zoddir Control Center</h1>
-          <p class="text-[11px] text-[#A3E635]">● Live Connected to Render</p>
-        </div>
+        <div><h1 class="text-lg font-extrabold">Zoddir Control Center</h1><p class="text-[11px] text-[#A3E635]">● Live Connected</p></div>
       </div>
       <div class="flex gap-2">
-        <button onclick="loadDashboard()" class="bg-slate-800 hover:bg-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold">🔄 রিফ্রেশ</button>
-        <button onclick="logout()" class="bg-rose-600/20 text-rose-400 border border-rose-500/30 px-3.5 py-2 rounded-xl text-xs font-bold">লগআউট</button>
+        <button onclick="loadDashboard()" class="bg-slate-800 px-3.5 py-2 rounded-xl text-xs font-bold">🔄 রিফ্রেশ</button>
+        <button onclick="logout()" class="bg-rose-600/20 text-rose-400 px-3.5 py-2 rounded-xl text-xs font-bold">লগআউট</button>
       </div>
     </div>
 
-    <!-- STATS -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><p class="text-xs text-slate-400">মোট রাইড</p><p id="sRides" class="text-2xl font-black mt-1">0</p></div>
       <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><p class="text-xs text-slate-400">চলমান রাইড</p><p id="sActive" class="text-2xl font-black text-[#00D2B8] mt-1">0</p></div>
-      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><p class="text-xs text-slate-400">মোট ট্রিপ লেনদেন</p><p id="sRev" class="text-2xl font-black text-white mt-1">৳0</p></div>
-      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><p class="text-xs text-slate-400">Zoddir কমিশন আয়</p><p id="sComm" class="text-2xl font-black text-[#A3E635] mt-1">৳0</p></div>
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><p class="text-xs text-slate-400">মোট লেনদেন</p><p id="sRev" class="text-2xl font-black mt-1">৳0</p></div>
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><p class="text-xs text-slate-400">Zoddir কমিশন</p><p id="sComm" class="text-2xl font-black text-[#A3E635] mt-1">৳0</p></div>
     </div>
 
-    <!-- TAB NAV -->
     <div class="flex overflow-x-auto gap-2 pb-1">
       <button onclick="showTab('RIDES')" id="t_RIDES" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-[#00D2B8] text-[#0F172A] whitespace-nowrap">🗺️ লাইভ রাইডস</button>
-      <button onclick="showTab('DRIVERS')" id="t_DRIVERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">🪪 ড্রাইভার ও ডকুমেন্টস</button>
-      <button onclick="showTab('RIDERS')" id="t_RIDERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">👥 যাত্রী ম্যানেজমেন্ট</button>
+      <button onclick="showTab('DRIVERS')" id="t_DRIVERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">🪪 ড্রাইভার ও Premium</button>
+      <button onclick="showTab('RIDERS')" id="t_RIDERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">👥 যাত্রী</button>
       <button onclick="showTab('RATES')" id="t_RATES" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">⚙️ ভাড়া ও প্রমো</button>
-      <button onclick="showTab('WITHDRAWS')" id="t_WITHDRAWS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">💸 বিকাশ/নগদ উইথড্র</button>
+      <button onclick="showTab('WITHDRAWS')" id="t_WITHDRAWS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">💸 উইথড্র ও বকেয়া</button>
+      <button onclick="showTab('SETTINGS')" id="t_SETTINGS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">📡 Radius ও পেমেন্ট সেটিংস</button>
     </div>
 
-    <!-- SECTION: RIDES -->
-    <div id="sec_RIDES" class="tabSec bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
-      <h2 class="font-extrabold text-[#00D2B8]">🗺️ সাম্প্রতিক ও লাইভ রাইড মনিটর</h2>
-      <div id="ridesList" class="space-y-2 text-xs"></div>
-    </div>
+    <div id="sec_RIDES" class="tabSec bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs"></div>
+    <div id="sec_DRIVERS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3"></div>
+    <div id="sec_RIDERS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 grid md:grid-cols-2 gap-2"></div>
 
-    <!-- SECTION: DRIVERS -->
-    <div id="sec_DRIVERS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
-      <h2 class="font-extrabold text-[#00D2B8]">🪪 ড্রাইভার ভেরিফিকেশন, ওয়ালেট ও Suspend</h2>
-      <div id="driversList" class="space-y-3"></div>
-    </div>
-
-    <!-- SECTION: RIDERS -->
-    <div id="sec_RIDERS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
-      <h2 class="font-extrabold text-[#00D2B8]">👥 যাত্রী তালিকা (Active / Suspend)</h2>
-      <div id="ridersList" class="grid md:grid-cols-2 gap-2"></div>
-    </div>
-
-    <!-- SECTION: RATES & PROMOS -->
     <div id="sec_RATES" class="tabSec hidden space-y-4">
       <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
-        <h2 class="font-extrabold text-[#A3E635] mb-3">⚙️ গাড়ির ভাড়া ও কমিশন</h2>
-        <div id="ratesList" class="grid md:grid-cols-3 gap-3"></div>
+        <h2 class="font-extrabold text-[#A3E635] mb-3">⚙️ ভাড়া ও কমিশন (BIKE, CNG, CAR, PREMIUM)</h2>
+        <div id="ratesList" class="grid md:grid-cols-4 gap-3"></div>
       </div>
       <div class="grid md:grid-cols-2 gap-4">
         <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
-          <h2 class="font-extrabold text-[#00D2B8]">🎟️ যাত্রী প্রমো কোড</h2>
-          <input id="pCode" placeholder="কোড (যেমন: ZODDIR50)" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
+          <h2 class="font-extrabold text-[#00D2B8]">🎟️ যাত্রী প্রমো</h2>
+          <input id="pCode" placeholder="কোড (ZODDIR50)" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
           <div class="flex gap-2">
             <select id="pType" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm"><option value="FIXED">Fixed (৳)</option><option value="PERCENT">Percent (%)</option></select>
             <input id="pVal" type="number" placeholder="ছাড় (50)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
@@ -97,7 +75,7 @@
         </div>
         <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
           <h2 class="font-extrabold text-[#A3E635]">🏆 ড্রাইভার বোনাস (Quest)</h2>
-          <input id="qTitle" placeholder="টাইটেল (আজ ১০ ট্রিপে ৩০০৳ বোনাস)" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
+          <input id="qTitle" placeholder="টাইটেল" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
           <div class="flex gap-2">
             <input id="qTrips" type="number" placeholder="ট্রিপ (10)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
             <input id="qBonus" type="number" placeholder="বোনাস (300)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
@@ -108,14 +86,35 @@
       </div>
     </div>
 
-    <!-- SECTION: WITHDRAWS -->
-    <div id="sec_WITHDRAWS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
-      <h2 class="font-extrabold text-[#A3E635]">💸 ড্রাইভার বিকাশ / নগদ উইথড্র রিকোয়েস্ট</h2>
-      <div id="withdrawList" class="space-y-2 text-sm"></div>
+    <div id="sec_WITHDRAWS" class="tabSec hidden space-y-4">
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2">
+        <h2 class="font-extrabold text-[#00D2B8]">💰 ড্রাইভারের বকেয়া (Cash Commission) পরিশোধ অ্যাপ্রুভাল</h2>
+        <div id="dueList" class="space-y-2 text-xs"></div>
+      </div>
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2">
+        <h2 class="font-extrabold text-[#A3E635]">💸 ড্রাইভার উইথড্র রিকোয়েস্ট</h2>
+        <div id="withdrawList" class="space-y-2 text-xs"></div>
+      </div>
+    </div>
+
+    <!-- RADIUS & PAYMENT SETTINGS -->
+    <div id="sec_SETTINGS" class="tabSec hidden bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-4">
+      <h2 class="font-extrabold text-[#00D2B8] text-lg">📡 ম্যাপ Radius এবং বিকাশ/নগদ/ব্যাংক মার্চেন্ট সেটিংস</h2>
+      <div class="grid md:grid-cols-2 gap-3 text-xs">
+        <div><label class="text-slate-400">ম্যাপে গাড়ি দেখার Radius (KM)</label><input id="set_view_rad" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">ট্রিপ রিকোয়েস্ট যাওয়ার Radius (KM)</label><input id="set_disp_rad" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">🩷 bKash Merchant নম্বর</label><input id="set_bkash_m" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">bKash পেমেন্ট লিংক (URL)</label><input id="set_bkash_l" placeholder="https://shop.bkash.com/..." class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">bKash QR ছবির লিংক (URL)</label><input id="set_bkash_q" placeholder="https://.../qr.png" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">🟠 Nagad Merchant নম্বর</label><input id="set_nagad_m" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">Nagad পেমেন্ট লিংক (URL)</label><input id="set_nagad_l" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div><label class="text-slate-400">Nagad QR ছবির লিংক (URL)</label><input id="set_nagad_q" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        <div class="md:col-span-2"><label class="text-slate-400">🏦 ব্যাংক অ্যাকাউন্টের তথ্য</label><input id="set_bank" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+      </div>
+      <button onclick="saveSettings()" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-6 py-3 rounded-xl text-sm">সেটিংস সেভ করুন</button>
     </div>
   </div>
 
-  <!-- IMAGE PREVIEW -->
   <div id="imgModal" class="hidden fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50" onclick="this.classList.add('hidden')">
     <div class="max-w-lg w-full bg-slate-900 p-3 rounded-2xl border border-slate-700 text-center">
       <p id="imgTitle" class="text-sm font-bold mb-2 text-[#00D2B8]"></p>
@@ -131,41 +130,23 @@
   function showTab(k) {
     document.querySelectorAll('.tabSec').forEach(el => el.classList.add('hidden'));
     document.getElementById(`sec_${k}`).classList.remove('hidden');
-    document.querySelectorAll('.tabBtn').forEach(b => {
-      b.className = 'tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap';
-    });
+    document.querySelectorAll('.tabBtn').forEach(b => b.className = 'tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap');
     document.getElementById(`t_${k}`).className = 'tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-[#00D2B8] text-[#0F172A] whitespace-nowrap';
   }
 
   async function registerAdmin() {
-    setMsg('কানেক্ট হচ্ছে...');
-    const res = await fetch(`${API}/api/auth/register`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name: val('name') || 'Admin', phone: val('phone'), password: val('password'), role: 'ADMIN' })
-    });
-    const d = await res.json();
-    if (d.token) saveToken(d.token); else setMsg(d.error || 'Error');
+    const res = await fetch(`${API}/api/auth/register`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: val('name') || 'Admin', phone: val('phone'), password: val('password'), role: 'ADMIN' }) });
+    const d = await res.json(); if (d.token) saveToken(d.token); else setMsg(d.error);
   }
-
   async function login() {
-    setMsg('কানেক্ট হচ্ছে...');
-    const res = await fetch(`${API}/api/auth/login`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ phone: val('phone'), password: val('password') })
-    });
-    const d = await res.json();
-    if (d.token && d.user.role === 'ADMIN') saveToken(d.token); else setMsg(d.error || 'Admin হতে হবে');
+    const res = await fetch(`${API}/api/auth/login`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ phone: val('phone'), password: val('password') }) });
+    const d = await res.json(); if (d.token && d.user.role === 'ADMIN') saveToken(d.token); else setMsg(d.error || 'Admin হতে হবে');
   }
-
   function saveToken(t) { token = t; localStorage.setItem('admin_token', t); loadDashboard(); }
   function logout() { localStorage.removeItem('admin_token'); location.reload(); }
   function val(id) { return document.getElementById(id).value.trim(); }
   function setMsg(m) { document.getElementById('authMsg').innerText = m; }
-  function showDoc(title, src) {
-    document.getElementById('imgTitle').innerText = title;
-    document.getElementById('imgPreview').src = src;
-    document.getElementById('imgModal').classList.remove('hidden');
-  }
+  function showDoc(title, src) { document.getElementById('imgTitle').innerText = title; document.getElementById('imgPreview').src = src; document.getElementById('imgModal').classList.remove('hidden'); }
 
   async function loadDashboard() {
     document.getElementById('authBox').classList.add('hidden');
@@ -179,44 +160,51 @@
     document.getElementById('sRev').innerText = `৳${d.stats.total_revenue || 0}`;
     document.getElementById('sComm').innerText = `৳${d.stats.total_commission}`;
 
-    // RIDES
-    document.getElementById('ridesList').innerHTML = (d.rides || []).map(r => `
+    // Settings fill
+    const s = d.settings || {};
+    document.getElementById('set_view_rad').value = s.driver_view_radius_km || '5';
+    document.getElementById('set_disp_rad').value = s.dispatch_radius_km || '5';
+    document.getElementById('set_bkash_m').value = s.bkash_merchant || '';
+    document.getElementById('set_bkash_l').value = s.bkash_pay_link || '';
+    document.getElementById('set_bkash_q').value = s.bkash_qr_url || '';
+    document.getElementById('set_nagad_m').value = s.nagad_merchant || '';
+    document.getElementById('set_nagad_l').value = s.nagad_pay_link || '';
+    document.getElementById('set_nagad_q').value = s.nagad_qr_url || '';
+    document.getElementById('set_bank').value = s.bank_details || '';
+
+    document.getElementById('sec_RIDES').innerHTML = (d.rides || []).map(r => `
       <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 flex flex-wrap justify-between items-center gap-2">
         <div>
-          <span class="font-extrabold text-white">#${r.id} (${r.vehicle_type})</span>
-          <span class="ml-2 px-2 py-0.5 rounded bg-slate-700 text-[#00D2B8] font-bold">${r.status}</span>
-          <div class="text-slate-300 mt-1">যাত্রী: ${r.rider_name || '-'} • ড্রাইভার: ${r.driver_name || 'খুঁজছে'}</div>
+          <span class="font-extrabold">#${r.id} (${r.vehicle_type})</span> <span class="ml-1 px-2 py-0.5 rounded bg-slate-700 text-[#00D2B8]">${r.status}</span>
+          <div class="text-slate-300 mt-1">যাত্রী: ${r.rider_name || '-'} • ড্রাইভার: ${r.driver_name || '-'}</div>
           <div class="text-slate-400">🟢 ${r.pickup_address} → 📍 ${r.drop_address}</div>
-          ${r.cancel_reason ? `<div class="text-rose-400">কারণ: ${r.cancel_reason}</div>` : ''}
         </div>
         <div class="text-right">
-          <div class="font-extrabold text-[#A3E635] text-sm">৳${Number(r.final_fare) > 0 ? r.final_fare : r.estimated_fare} (${r.payment_method})</div>
-          <div class="text-slate-400">${r.actual_distance_km || 0} km • ${r.payment_status}</div>
+          <div class="font-extrabold text-[#A3E635]">৳${Number(r.final_fare) > 0 ? r.final_fare : r.estimated_fare} (${r.payment_method})</div>
           ${['SEARCHING','ACCEPTED','STARTED'].includes(r.status) ? `<button onclick="forceCancel(${r.id})" class="mt-1 bg-rose-600 text-white px-2.5 py-1 rounded-lg font-bold">Force Cancel</button>` : ''}
         </div>
       </div>
     `).join('') || '<p class="text-slate-500">কোনো রাইড নেই</p>';
 
-    // DRIVERS
-    document.getElementById('driversList').innerHTML = (d.drivers || []).map(dr => `
+    document.getElementById('sec_DRIVERS').innerHTML = (d.drivers || []).map(dr => `
       <div class="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700 space-y-2">
         <div class="flex flex-wrap justify-between items-center gap-2">
           <div class="flex items-center gap-2.5">
             ${dr.avatar_url ? `<img src="${dr.avatar_url}" class="w-10 h-10 rounded-full object-cover border border-[#00D2B8]" />` : `<div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center">👨‍✈️</div>`}
             <div>
-              <div class="font-extrabold text-white">${dr.name} (${dr.phone})</div>
+              <div class="font-extrabold">${dr.name} (${dr.phone})</div>
               <div class="text-xs text-[#00D2B8]">${dr.vehicle_type} • ${dr.vehicle_model || ''} • ${dr.plate_number || ''} • ওয়ালেট: <b class="text-[#A3E635]">৳${dr.wallet_balance}</b></div>
             </div>
           </div>
           <div class="flex gap-1.5 text-xs">
             <span class="px-2 py-1 rounded-lg font-bold ${dr.verification_status === 'APPROVED' ? 'bg-emerald-900 text-emerald-300' : 'bg-amber-900 text-amber-300'}">${dr.verification_status || 'PENDING'}</span>
-            <span class="px-2 py-1 rounded-lg font-bold ${dr.is_active ? 'bg-sky-900 text-sky-300' : 'bg-rose-950 text-rose-400'}">${dr.is_active ? 'ACTIVE' : 'SUSPENDED'}</span>
+            ${dr.vehicle_type === 'CAR' ? `<button onclick="togglePremium(${dr.user_id})" class="px-2.5 py-1 rounded-lg font-extrabold ${dr.allow_premium ? 'bg-[#A3E635] text-[#0F172A]' : 'bg-slate-700 text-slate-300'}">${dr.allow_premium ? '⭐ Premium ON' : '☆ Premium OFF'}</button>` : ''}
           </div>
         </div>
         <div class="flex flex-wrap gap-2 text-xs">
-          ${dr.nid_photo ? `<button onclick="showDoc('${dr.name} - NID', '${dr.nid_photo}')" class="bg-slate-700 px-2.5 py-1.5 rounded-lg">🪪 NID</button>` : '<span class="text-slate-500">NID নেই</span>'}
-          ${dr.license_photo ? `<button onclick="showDoc('${dr.name} - License', '${dr.license_photo}')" class="bg-slate-700 px-2.5 py-1.5 rounded-lg">📄 License</button>` : '<span class="text-slate-500">License নেই</span>'}
-          ${dr.vehicle_paper_photo ? `<button onclick="showDoc('${dr.name} - Vehicle Paper', '${dr.vehicle_paper_photo}')" class="bg-slate-700 px-2.5 py-1.5 rounded-lg">🚗 গাড়ির কাগজ</button>` : '<span class="text-slate-500">কাগজ নেই</span>'}
+          ${dr.nid_photo ? `<button onclick="showDoc('${dr.name} - NID', '${dr.nid_photo}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">🪪 NID</button>` : ''}
+          ${dr.license_photo ? `<button onclick="showDoc('${dr.name} - License', '${dr.license_photo}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">📄 License</button>` : ''}
+          ${dr.vehicle_paper_photo ? `<button onclick="showDoc('${dr.name} - Paper', '${dr.vehicle_paper_photo}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">🚗 কাগজ</button>` : ''}
         </div>
         <div class="flex flex-wrap gap-2 pt-1 text-xs">
           <button onclick="verifyDriver(${dr.user_id}, 'APPROVED')" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1.5 rounded-lg">✅ Approve</button>
@@ -227,106 +215,68 @@
       </div>
     `).join('') || '<p class="text-slate-500 text-xs">কোনো ড্রাইভার নেই</p>';
 
-    // RIDERS
-    document.getElementById('ridersList').innerHTML = (d.riders || []).map(rd => `
+    document.getElementById('sec_RIDERS').innerHTML = (d.riders || []).map(rd => `
       <div class="bg-slate-800/80 p-3 rounded-xl flex justify-between items-center text-xs border border-slate-700">
-        <div>
-          <span class="font-extrabold text-white">${rd.name}</span> (${rd.phone})
-          <div class="text-slate-400">মোট রাইড: ${rd.total_rides || 0} • <span class="${rd.is_active ? 'text-[#A3E635]' : 'text-rose-400'} font-bold">${rd.is_active ? 'Active' : 'Suspended'}</span></div>
-        </div>
-        <button onclick="toggleUserActive(${rd.id}, ${!rd.is_active})" class="${rd.is_active ? 'bg-rose-600 text-white' : 'bg-[#00D2B8] text-[#0F172A]'} font-extrabold px-3 py-1.5 rounded-lg">${rd.is_active ? 'Suspend' : 'Active করুন'}</button>
+        <div><span class="font-extrabold">${rd.name}</span> (${rd.phone}) <div class="text-slate-400">রাইড: ${rd.total_rides}</div></div>
+        <button onclick="toggleUserActive(${rd.id}, ${!rd.is_active})" class="${rd.is_active ? 'bg-rose-600 text-white' : 'bg-[#00D2B8] text-[#0F172A]'} font-extrabold px-3 py-1.5 rounded-lg">${rd.is_active ? 'Suspend' : 'Active'}</button>
       </div>
     `).join('') || '<p class="text-slate-500 text-xs">কোনো যাত্রী নেই</p>';
 
-    // RATES
     document.getElementById('ratesList').innerHTML = d.rates.map(r => `
       <div class="bg-slate-800 p-3 rounded-xl space-y-2 text-xs">
         <div class="font-extrabold text-[#00D2B8] text-sm">${r.vehicle_type}</div>
         <div>Base: <input id="b_${r.vehicle_type}" value="${r.base_fare}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
-        <div>Per KM: <input id="k_${r.vehicle_type}" value="${r.per_km_rate}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
-        <div>Per Min: <input id="m_${r.vehicle_type}" value="${r.per_min_rate}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
-        <div>Min Fare: <input id="mf_${r.vehicle_type}" value="${r.min_fare}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
-        <div>Comm %: <input id="c_${r.vehicle_type}" value="${r.commission_percent}" class="w-16 bg-slate-900 p-1 rounded" /> %</div>
+        <div>KM: <input id="k_${r.vehicle_type}" value="${r.per_km_rate}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>Min: <input id="m_${r.vehicle_type}" value="${r.per_min_rate}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>MinF: <input id="mf_${r.vehicle_type}" value="${r.min_fare}" class="w-16 bg-slate-900 p-1 rounded" /> ৳</div>
+        <div>Comm%: <input id="c_${r.vehicle_type}" value="${r.commission_percent}" class="w-16 bg-slate-900 p-1 rounded" /> %</div>
         <button onclick="updateRate('${r.vehicle_type}')" class="w-full bg-[#A3E635] text-[#0F172A] font-extrabold py-1.5 rounded-lg">আপডেট</button>
       </div>
     `).join('');
 
-    document.getElementById('promosList').innerHTML = d.promos.map(p => `
-      <div class="bg-slate-800 p-2.5 rounded-xl flex justify-between items-center">
-        <span><b>${p.code}</b> (${p.discount_value} ${p.discount_type}) • ${p.used_count}/${p.usage_limit}</span>
-        <button onclick="togglePromo(${p.id})" class="px-2.5 py-1 rounded-lg font-bold ${p.is_active ? 'bg-[#00D2B8] text-[#0F172A]' : 'bg-slate-700 text-slate-300'}">${p.is_active ? 'ON' : 'OFF'}</button>
-      </div>
-    `).join('') || '<p class="text-slate-500">কোনো প্রমো নেই</p>';
+    document.getElementById('promosList').innerHTML = d.promos.map(p => `<div class="bg-slate-800 p-2 rounded-xl flex justify-between"><span><b>${p.code}</b> (${p.discount_value} ${p.discount_type})</span><button onclick="togglePromo(${p.id})" class="px-2 py-0.5 rounded font-bold ${p.is_active ? 'bg-[#00D2B8] text-[#0F172A]' : 'bg-slate-700'}">${p.is_active ? 'ON' : 'OFF'}</button></div>`).join('');
+    document.getElementById('questsList').innerHTML = d.quests.map(q => `<div class="bg-slate-800 p-2 rounded-xl flex justify-between"><span><b>${q.title}</b> (৳${q.bonus_amount})</span><button onclick="toggleQuest(${q.id})" class="px-2 py-0.5 rounded font-bold ${q.is_active ? 'bg-[#A3E635] text-[#0F172A]' : 'bg-slate-700'}">${q.is_active ? 'ON' : 'OFF'}</button></div>`).join('');
 
-    document.getElementById('questsList').innerHTML = d.quests.map(q => `
-      <div class="bg-slate-800 p-2.5 rounded-xl flex justify-between items-center">
-        <span><b>${q.title}</b> (${q.target_trips} ট্রিপ = ৳${q.bonus_amount})</span>
-        <button onclick="toggleQuest(${q.id})" class="px-2.5 py-1 rounded-lg font-bold ${q.is_active ? 'bg-[#A3E635] text-[#0F172A]' : 'bg-slate-700 text-slate-300'}">${q.is_active ? 'ON' : 'OFF'}</button>
+    document.getElementById('dueList').innerHTML = (d.duePayments || []).map(dp => `
+      <div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center">
+        <div><b>${dp.name}</b> (${dp.phone}) • <b class="text-[#00D2B8]">৳${dp.amount}</b> via ${dp.method} (Trx: ${dp.trx_id})</div>
+        ${dp.status === 'PENDING' ? `<button onclick="approveDue(${dp.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1 rounded-lg">✅ Approve & Clear</button>` : `<span class="text-emerald-400 font-bold">${dp.status}</span>`}
       </div>
-    `).join('') || '<p class="text-slate-500">কোনো অফার নেই</p>';
+    `).join('') || '<p class="text-slate-500">কোনো বকেয়া পেমেন্ট নেই</p>';
 
     document.getElementById('withdrawList').innerHTML = d.withdraws.map(w => `
-      <div class="bg-slate-800 p-3 rounded-xl flex flex-wrap justify-between items-center gap-2">
-        <div>
-          <span class="font-extrabold">${w.name}</span> (${w.phone}) —
-          <span class="text-[#A3E635] font-extrabold">৳${w.amount}</span> via <b>${w.method}</b> (${w.account_number})
-        </div>
-        <div class="flex gap-2">
-          ${w.status === 'PENDING'
-            ? `<button onclick="approveWithdraw(${w.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1.5 rounded-lg text-xs">✅ Approve</button>
-               <button onclick="rejectWithdraw(${w.id})" class="bg-rose-600 text-white font-extrabold px-3 py-1.5 rounded-lg text-xs">❌ Reject</button>`
-            : `<span class="text-xs px-2.5 py-1 rounded-lg ${w.status === 'COMPLETED' ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-300'}">${w.status} (${w.trx_id || ''})</span>`}
-        </div>
+      <div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center">
+        <div><b>${w.name}</b> — <b class="text-[#A3E635]">৳${w.amount}</b> via ${w.method} (${w.account_number})</div>
+        <div>${w.status === 'PENDING' ? `<button onclick="approveWithdraw(${w.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-2.5 py-1 rounded-lg mr-1">✅ Approve</button><button onclick="rejectWithdraw(${w.id})" class="bg-rose-600 text-white font-bold px-2.5 py-1 rounded-lg">❌ Reject</button>` : w.status}</div>
       </div>
-    `).join('') || '<p class="text-slate-500 text-xs">কোনো উইথড্র রিকোয়েস্ট নেই</p>';
+    `).join('') || '<p class="text-slate-500">কোনো উইথড্র রিকোয়েস্ট নেই</p>';
   }
 
-  async function verifyDriver(id, status) {
-    let reason = '';
-    if (status === 'REJECTED') reason = prompt('বাতিল করার কারণ:') || 'অস্পষ্ট ডকুমেন্ট';
-    await fetch(`${API}/api/admin/drivers/${id}/verify`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ status, reason }) });
-    loadDashboard();
+  async function saveSettings() {
+    await fetch(`${API}/api/admin/settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify({
+        driver_view_radius_km: val('set_view_rad'), dispatch_radius_km: val('set_disp_rad'),
+        bkash_merchant: val('set_bkash_m'), bkash_pay_link: val('set_bkash_l'), bkash_qr_url: val('set_bkash_q'),
+        nagad_merchant: val('set_nagad_m'), nagad_pay_link: val('set_nagad_l'), nagad_qr_url: val('set_nagad_q'),
+        bank_details: val('set_bank')
+      })
+    });
+    alert('সেটিংস সেভ হয়েছে! ✅');
   }
-  async function adjustWallet(id) {
-    const amount = prompt('কত টাকা বোনাস/যোগ করবেন? (যেমন: 100 বা -50)');
-    if (!amount) return;
-    await fetch(`${API}/api/admin/drivers/${id}/wallet-adjust`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ amount, note: 'Zoddir Admin Bonus' }) });
-    loadDashboard();
-  }
-  async function toggleUserActive(id, is_active) {
-    await fetch(`${API}/api/admin/users/${id}/toggle-active`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ is_active }) });
-    loadDashboard();
-  }
-  async function forceCancel(id) {
-    await fetch(`${API}/api/admin/rides/${id}/force-cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-    loadDashboard();
-  }
-  async function updateRate(t) {
-    await fetch(`${API}/api/admin/rates/${t}`, { method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
-      body: JSON.stringify({ base_fare: val(`b_${t}`), per_km_rate: val(`k_${t}`), per_min_rate: val(`m_${t}`), min_fare: val(`mf_${t}`), commission_percent: val(`c_${t}`) }) });
-    alert(`${t} আপডেট হয়েছে!`);
-  }
-  async function createPromo() {
-    await fetch(`${API}/api/admin/promos`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ code: val('pCode'), discount_type: val('pType'), discount_value: val('pVal') }) });
-    loadDashboard();
-  }
+  async function togglePremium(id) { await fetch(`${API}/api/admin/drivers/${id}/toggle-premium`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
+  async function approveDue(id) { await fetch(`${API}/api/admin/due-payments/${id}/approve`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
+  async function verifyDriver(id, status) { let reason = ''; if (status === 'REJECTED') reason = prompt('কারণ:') || 'Invalid docs'; await fetch(`${API}/api/admin/drivers/${id}/verify`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ status, reason }) }); loadDashboard(); }
+  async function adjustWallet(id) { const amount = prompt('কত টাকা যোগ/বিয়োগ করবেন?'); if (!amount) return; await fetch(`${API}/api/admin/drivers/${id}/wallet-adjust`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ amount }) }); loadDashboard(); }
+  async function toggleUserActive(id, is_active) { await fetch(`${API}/api/admin/users/${id}/toggle-active`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ is_active }) }); loadDashboard(); }
+  async function forceCancel(id) { await fetch(`${API}/api/admin/rides/${id}/force-cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
+  async function updateRate(t) { await fetch(`${API}/api/admin/rates/${t}`, { method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ base_fare: val(`b_${t}`), per_km_rate: val(`k_${t}`), per_min_rate: val(`m_${t}`), min_fare: val(`mf_${t}`), commission_percent: val(`c_${t}`) }) }); alert('আপডেট হয়েছে!'); }
+  async function createPromo() { await fetch(`${API}/api/admin/promos`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ code: val('pCode'), discount_type: val('pType'), discount_value: val('pVal') }) }); loadDashboard(); }
   async function togglePromo(id) { await fetch(`${API}/api/admin/promos/${id}/toggle`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
-  async function createQuest() {
-    await fetch(`${API}/api/admin/quests`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ title: val('qTitle'), target_trips: val('qTrips'), bonus_amount: val('qBonus'), start_time: new Date(), end_time: new Date(Date.now() + 7 * 86400000) }) });
-    loadDashboard();
-  }
+  async function createQuest() { await fetch(`${API}/api/admin/quests`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ title: val('qTitle'), target_trips: val('qTrips'), bonus_amount: val('qBonus'), start_time: new Date(), end_time: new Date(Date.now() + 7 * 86400000) }) }); loadDashboard(); }
   async function toggleQuest(id) { await fetch(`${API}/api/admin/quests/${id}/toggle`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
-  async function approveWithdraw(id) {
-    const trx_id = prompt('বিকাশ/নগদ TrxID দিন:'); if (!trx_id) return;
-    await fetch(`${API}/api/admin/withdraws/${id}/approve`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ trx_id }) });
-    loadDashboard();
-  }
-  async function rejectWithdraw(id) {
-    if (!confirm('বাতিল করে ড্রাইভারের ওয়ালেটে টাকা ফেরত দেবেন?')) return;
-    await fetch(`${API}/api/admin/withdraws/${id}/reject`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-    loadDashboard();
-  }
+  async function approveWithdraw(id) { const trx_id = prompt('TrxID:'); if (!trx_id) return; await fetch(`${API}/api/admin/withdraws/${id}/approve`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ trx_id }) }); loadDashboard(); }
+  async function rejectWithdraw(id) { if (!confirm('রিফান্ড করবেন?')) return; await fetch(`${API}/api/admin/withdraws/${id}/reject`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
 </script>
 </body>
 </html>
-    
