@@ -1,15 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  StyleSheet, Text, View, TextInput, TouchableOpacity, Platform,
-  ScrollView, Alert, ActivityIndicator, StatusBar
+  StyleSheet, Text, View, TextInput, TouchableOpacity, Platform, Modal,
+  ScrollView, Alert, ActivityIndicator, StatusBar, Animated, Image
 } from 'react-native';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import LeafletMap from './LeafletMap';
 
 const API = 'https://uber-bd-platform.onrender.com';
 const TOP_PAD = Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 10 : 50;
+
+// Uber-style Searching Radar Animation Component
+function SearchingRadar() {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(pulse, { toValue: 1, duration: 1800, useNativeDriver: true })
+    ).start();
+  }, []);
+
+  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 2.4] });
+  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] });
+
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center', height: 90, marginVertical: 4 }}>
+      <Animated.View style={[styles.radarRing, { transform: [{ scale }], opacity }]} />
+      <View style={styles.radarCenter}><Text style={{ fontSize: 26 }}>🚕</Text></View>
+    </View>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -20,31 +41,61 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Pickup & Drop States
   const [pickup, setPickup] = useState({ lat: 23.8103, lng: 90.4125 });
-  const [recenterCount, setRecenterCount] = useState(0);
+  const [pickupAddress, setPickupAddress] = useState('বর্তমান লোকেশন খুঁজছে...');
+  const [pickupQuery, setPickupQuery] = useState('');
   const [drop, setDrop] = useState(null);
   const [dropAddress, setDropAddress] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [dropQuery, setDropQuery] = useState('');
+  const [activeField, setActiveField] = useState('DROP'); // 'PICKUP' | 'DROP'
   const [searchResults, setSearchResults] = useState([]);
+  const [recenterCount, setRecenterCount] = useState(0);
 
+  // Estimate & Ride States
   const [routeCoords, setRouteCoords] = useState([]);
   const [tripMeta, setTripMeta] = useState(null);
   const [estimates, setEstimates] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState('BIKE');
   const [promoCode, setPromoCode] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('CASH');
-
   const [activeRide, setActiveRide] = useState(null);
   const [driverLoc, setDriverLoc] = useState(null);
   const [payPin, setPayPin] = useState('');
-  const socketRef = useRef(null);
+
+  // Profile Modal States
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editBkash, setEditBkash] = useState('');
+  const [editNagad, setEditNagad] = useState('');
+  const [editAvatar, setEditAvatar] = useState(null);
+
+  const reverseGeocode = async (lat, lng, setter) => {
+    try {
+      const res = await axios.get(`https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}`);
+      const p = res.data.features?.[0]?.properties;
+      if (p) {
+        const label = [p.name, p.street, p.district || p.city].filter(Boolean).slice(0, 2).join(', ');
+        setter(label || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+      }
+    } catch {
+      setter(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+    }
+  };
 
   const fetchGPS = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        setPickup({ lat: loc.coords.latitude, lng: loc.coords.longitude });
+        const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+        setPickup(coords);
+        reverseGeocode(coords.lat, coords.lng, (addr) => {
+          setPickupAddress(addr);
+          setPickupQuery(addr);
+        });
+        if (drop) fetchEstimate(coords, drop);
       }
     } catch {}
   };
@@ -59,7 +110,6 @@ export default function App() {
   useEffect(() => {
     if (!user || !token) return;
     const socket = io(API, { transports: ['websocket'] });
-    socketRef.current = socket;
     socket.on('connect', () => socket.emit('join_room', { role: 'RIDER', userId: user.id }));
     socket.on('ride_accepted', (ride) => setActiveRide(ride));
     socket.on('ride_started', (ride) => setActiveRide(ride));
@@ -82,7 +132,7 @@ export default function App() {
     setActiveRide(null);
     setDrop(null);
     setDropAddress('');
-    setSearchQuery('');
+    setDropQuery('');
     setEstimates([]);
     setRouteCoords([]);
     setTripMeta(null);
@@ -104,8 +154,44 @@ export default function App() {
     setLoading(false);
   };
 
-  const searchPlace = async (text) => {
-    setSearchQuery(text);
+  const openProfile = () => {
+    setEditName(user.name || '');
+    setEditPhone(user.phone || '');
+    setEditBkash(user.bkash_number || '');
+    setEditNagad(user.nagad_number || '');
+    setEditAvatar(user.avatar_url || null);
+    setProfileOpen(true);
+  };
+
+  const pickImage = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.25, base64: true
+    });
+    if (!res.canceled && res.assets[0]?.base64) {
+      setEditAvatar(`data:image/jpeg;base64,${res.assets[0].base64}`);
+    }
+  };
+
+  const saveProfile = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.put(`${API}/api/auth/profile`, {
+        name: editName, phone: editPhone, avatar_url: editAvatar, bkash_number: editBkash, nagad_number: editNagad
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      setUser({ ...user, ...res.data.user });
+      setProfileOpen(false);
+      Alert.alert('সফল ✅', 'আপনার প্রোফাইল আপডেট হয়েছে!');
+    } catch (err) {
+      Alert.alert('ব্যর্থ', err.response?.data?.error || 'আপডেট করা যায়নি');
+    }
+    setLoading(false);
+  };
+
+  const searchPlace = async (text, field) => {
+    setActiveField(field);
+    if (field === 'PICKUP') setPickupQuery(text);
+    else setDropQuery(text);
+
     if (text.length < 3) return setSearchResults([]);
     try {
       const res = await axios.get(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=4&lat=${pickup.lat}&lon=${pickup.lng}`);
@@ -113,13 +199,13 @@ export default function App() {
     } catch {}
   };
 
-  const fetchEstimate = async (dropPoint, code = promoCode) => {
-    if (!dropPoint) return;
+  const fetchEstimate = async (pCoords, dCoords, code = promoCode) => {
+    if (!pCoords || !dCoords) return;
     setLoading(true);
     try {
       const res = await axios.post(`${API}/api/rides/estimate`, {
-        pickup_lat: pickup.lat, pickup_lng: pickup.lng,
-        drop_lat: dropPoint.lat, drop_lng: dropPoint.lng, promo_code: code
+        pickup_lat: pCoords.lat, pickup_lng: pCoords.lng,
+        drop_lat: dCoords.lat, drop_lng: dCoords.lng, promo_code: code
       });
       setRouteCoords(res.data.route_coords);
       setTripMeta({ km: res.data.distance_km, min: res.data.duration_min, promoValid: res.data.promo_valid });
@@ -128,11 +214,18 @@ export default function App() {
     setLoading(false);
   };
 
-  const selectDrop = (coords, label = 'ম্যাপে চিহ্নিত গন্তব্য') => {
-    setDrop(coords);
-    setDropAddress(label);
+  const handleMapTap = (coords) => {
     setSearchResults([]);
-    fetchEstimate(coords);
+    if (activeField === 'PICKUP') {
+      setPickup(coords);
+      reverseGeocode(coords.lat, coords.lng, (addr) => { setPickupAddress(addr); setPickupQuery(addr); });
+      if (drop) fetchEstimate(coords, drop);
+      setActiveField('DROP');
+    } else {
+      setDrop(coords);
+      reverseGeocode(coords.lat, coords.lng, (addr) => { setDropAddress(addr); setDropQuery(addr); });
+      fetchEstimate(pickup, coords);
+    }
   };
 
   const bookRide = async () => {
@@ -141,7 +234,7 @@ export default function App() {
     try {
       const res = await axios.post(`${API}/api/rides/request`, {
         vehicle_type: selectedVehicle,
-        pickup_lat: pickup.lat, pickup_lng: pickup.lng, pickup_address: 'আমার বর্তমান লোকেশন',
+        pickup_lat: pickup.lat, pickup_lng: pickup.lng, pickup_address: pickupAddress,
         drop_lat: drop.lat, drop_lng: drop.lng, drop_address: dropAddress,
         estimated_fare: chosen?.estimated_fare || 0, payment_method: paymentMethod, promo_code: promoCode
       }, { headers: { Authorization: `Bearer ${token}` } });
@@ -156,9 +249,7 @@ export default function App() {
     try {
       await axios.post(`${API}/api/rides/${activeRide.id}/cancel`, {}, { headers: { Authorization: `Bearer ${token}` } });
       resetRide();
-    } catch (err) {
-      Alert.alert('ব্যর্থ', err.response?.data?.error || 'বাতিল করা যায়নি');
-    }
+    } catch (err) { Alert.alert('ব্যর্থ', err.response?.data?.error || 'বাতিল করা যায়নি'); }
     setLoading(false);
   };
 
@@ -202,6 +293,10 @@ export default function App() {
     );
   }
 
+  const displayFare = activeRide
+    ? (Number(activeRide.final_fare) > 0 ? activeRide.final_fare : activeRide.estimated_fare)
+    : 0;
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
@@ -212,31 +307,46 @@ export default function App() {
         driverLoc={driverLoc}
         routeCoords={routeCoords}
         recenterCount={recenterCount}
-        onSelectDrop={(c) => selectDrop(c)}
+        onMapPress={handleMapTap}
       />
 
+      {/* Top Floating Pills */}
       <View style={[styles.floatingTop, { top: TOP_PAD }]}>
-        <TouchableOpacity style={styles.pillBtn} onPress={() => Alert.alert(user.name, 'লগআউট করতে চান?', [{ text: 'না' }, { text: 'হ্যাঁ', onPress: () => { setUser(null); setToken(''); } }])}>
-          <Text style={styles.pillText}>👤 {user.name}</Text>
+        <TouchableOpacity style={styles.pillBtn} onPress={openProfile}>
+          {user.avatar_url ? (
+            <Image source={{ uri: user.avatar_url }} style={styles.miniAvatar} />
+          ) : (
+            <Text style={{ fontSize: 16 }}>👤</Text>
+          )}
+          <Text style={styles.pillText}>{user.name}</Text>
         </TouchableOpacity>
+
         <TouchableOpacity style={styles.circleBtn} onPress={handleRecenter}>
           <Text style={{ fontSize: 20 }}>🎯</Text>
         </TouchableOpacity>
       </View>
 
+      {/* Bottom Sheet */}
       <View style={styles.sheet}>
         <View style={styles.handle} />
 
         {activeRide ? (
-          <View style={{ gap: 12 }}>
+          <View style={{ gap: 10 }}>
+            {activeRide.status === 'SEARCHING' && <SearchingRadar />}
+
             <View style={styles.statusHeader}>
               <Text style={styles.statusTitle}>
-                {activeRide.status === 'SEARCHING' && '🔍 কাছাকাছি ড্রাইভার খোঁজা হচ্ছে...'}
+                {activeRide.status === 'SEARCHING' && 'কাছাকাছি ড্রাইভার খোঁজা হচ্ছে...'}
                 {activeRide.status === 'ACCEPTED' && '✅ ড্রাইভার আসছেন!'}
                 {activeRide.status === 'STARTED' && '🛣️ ট্রিপ চলছে (লাইভ GPS)'}
                 {activeRide.status === 'COMPLETED' && '🏁 ট্রিপ সম্পন্ন হয়েছে'}
               </Text>
-              <Text style={styles.statusSub}>পেমেন্ট: {activeRide.payment_method} • ভাড়া: ৳{activeRide.final_fare || activeRide.estimated_fare}</Text>
+              <Text style={styles.statusSub}>
+                পেমেন্ট: {activeRide.payment_method} • ভাড়া: <Text style={{ color: '#059669', fontWeight: '800' }}>৳{displayFare}</Text>
+              </Text>
+              <Text style={styles.routeSummary} numberOfLines={1}>
+                🟢 {activeRide.pickup_address} → 📍 {activeRide.drop_address}
+              </Text>
             </View>
 
             {activeRide.driver_name && (
@@ -251,9 +361,9 @@ export default function App() {
 
             {activeRide.status === 'COMPLETED' ? (
               <View style={styles.receiptCard}>
-                <Text style={styles.receiptAmt}>৳ {activeRide.final_fare}</Text>
+                <Text style={styles.receiptAmt}>৳ {displayFare}</Text>
                 <Text style={styles.receiptInfo}>চলা দূরত্ব: {activeRide.actual_distance_km} কিমি • সময়: {activeRide.actual_duration_min} মিনিট</Text>
-                {activeRide.promo_discount > 0 && <Text style={{ color: '#059669', fontSize: 12, textAlign: 'center', fontWeight: '600' }}>প্রমো ছাড়: -৳{activeRide.promo_discount}</Text>}
+                {Number(activeRide.promo_discount) > 0 && <Text style={{ color: '#059669', fontSize: 12, textAlign: 'center', fontWeight: '600' }}>প্রমো ছাড়: -৳{activeRide.promo_discount}</Text>}
 
                 {activeRide.payment_method === 'CASH' || activeRide.payment_status === 'PAID' ? (
                   <TouchableOpacity style={styles.uberBlackBtn} onPress={resetRide}>
@@ -261,9 +371,12 @@ export default function App() {
                   </TouchableOpacity>
                 ) : (
                   <View style={{ gap: 8, marginTop: 6 }}>
+                    <Text style={{ fontSize: 12, color: '#475569', textAlign: 'center' }}>
+                      নম্বর: {activeRide.payment_method === 'BKASH' ? (user.bkash_number || user.phone) : (user.nagad_number || user.phone)}
+                    </Text>
                     <TextInput style={styles.lightInput} placeholder={`${activeRide.payment_method} পিন দিন (টেস্ট: 1234)`} placeholderTextColor="#64748b" secureTextEntry value={payPin} onChangeText={setPayPin} />
                     <TouchableOpacity style={[styles.uberBlackBtn, { backgroundColor: activeRide.payment_method === 'BKASH' ? '#e2136e' : '#ea580c' }]} onPress={confirmDigitalPayment}>
-                      <Text style={styles.uberBlackBtnText}>{activeRide.payment_method}-এ ৳{activeRide.final_fare} পে করুন</Text>
+                      <Text style={styles.uberBlackBtnText}>{activeRide.payment_method}-এ ৳{displayFare} পে করুন</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -277,21 +390,40 @@ export default function App() {
             )}
           </View>
         ) : (
-          <ScrollView style={{ maxHeight: 370 }} showsVerticalScrollIndicator={false}>
+          <ScrollView style={{ maxHeight: 390 }} showsVerticalScrollIndicator={false}>
+            {/* Mode Indicator */}
+            <View style={styles.modeRow}>
+              <TouchableOpacity onPress={() => setActiveField('PICKUP')} style={[styles.modePill, activeField === 'PICKUP' && styles.modePillActive]}>
+                <Text style={[styles.modeText, activeField === 'PICKUP' && { color: '#fff' }]}>🟢 পিকআপ সেট করুন</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setActiveField('DROP')} style={[styles.modePill, activeField === 'DROP' && styles.modePillActive]}>
+                <Text style={[styles.modeText, activeField === 'DROP' && { color: '#fff' }]}>📍 গন্তব্য সেট করুন</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Editable Pickup & Drop Box */}
             <View style={styles.routeBox}>
               <View style={styles.routeLineRow}>
                 <View style={styles.greenDot} />
-                <Text style={styles.pickupText}>আমার বর্তমান লোকেশন (GPS)</Text>
+                <TextInput
+                  style={styles.whereInput}
+                  placeholder="পিকআপ ঠিকানা (লিখুন বা ম্যাপে ট্যাপ করুন)"
+                  placeholderTextColor="#64748b"
+                  value={pickupQuery}
+                  onFocus={() => setActiveField('PICKUP')}
+                  onChangeText={(t) => searchPlace(t, 'PICKUP')}
+                />
               </View>
               <View style={styles.routeDivider} />
               <View style={styles.routeLineRow}>
                 <View style={styles.blackSquare} />
                 <TextInput
                   style={styles.whereInput}
-                  placeholder="কোথায় যাবেন? লিখুন বা ম্যাপে ট্যাপ করুন"
+                  placeholder="কোথায় যাবেন? (লিখুন বা ম্যাপে ট্যাপ করুন)"
                   placeholderTextColor="#64748b"
-                  value={searchQuery}
-                  onChangeText={searchPlace}
+                  value={dropQuery}
+                  onFocus={() => setActiveField('DROP')}
+                  onChangeText={(t) => searchPlace(t, 'DROP')}
                 />
               </View>
             </View>
@@ -301,9 +433,20 @@ export default function App() {
                 key={idx} style={styles.searchItem}
                 onPress={() => {
                   const [lng, lat] = item.geometry.coordinates;
-                  const title = item.properties.name || item.properties.city || 'গন্তব্য';
-                  setSearchQuery(title);
-                  selectDrop({ lat, lng }, title);
+                  const title = [item.properties.name, item.properties.city].filter(Boolean).join(', ') || 'সিলেক্টেড জায়গা';
+                  setSearchResults([]);
+                  if (activeField === 'PICKUP') {
+                    setPickup({ lat, lng });
+                    setPickupAddress(title);
+                    setPickupQuery(title);
+                    if (drop) fetchEstimate({ lat, lng }, drop);
+                    setActiveField('DROP');
+                  } else {
+                    setDrop({ lat, lng });
+                    setDropAddress(title);
+                    setDropQuery(title);
+                    fetchEstimate(pickup, { lat, lng });
+                  }
                 }}
               >
                 <Text style={{ color: '#0f172a', fontSize: 13, fontWeight: '500' }}>📍 {item.properties.name} {item.properties.city || ''}</Text>
@@ -342,7 +485,7 @@ export default function App() {
 
                 <View style={styles.promoRow}>
                   <TextInput style={styles.promoInput} placeholder="প্রমো কোড (যেমন EID50)" placeholderTextColor="#64748b" value={promoCode} onChangeText={setPromoCode} />
-                  <TouchableOpacity style={styles.promoBtn} onPress={() => fetchEstimate(drop, promoCode)}>
+                  <TouchableOpacity style={styles.promoBtn} onPress={() => fetchEstimate(pickup, drop, promoCode)}>
                     <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Apply</Text>
                   </TouchableOpacity>
                 </View>
@@ -365,6 +508,51 @@ export default function App() {
           </ScrollView>
         )}
       </View>
+
+      {/* FULL PROFILE MODAL */}
+      <Modal visible={profileOpen} animationType="slide" transparent>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>আমার প্রোফাইল ও পেমেন্ট</Text>
+                <TouchableOpacity onPress={() => setProfileOpen(false)}><Text style={{ fontSize: 20, color: '#64748b' }}>✕</Text></TouchableOpacity>
+              </View>
+
+              <TouchableOpacity onPress={pickImage} style={{ alignItems: 'center', marginBottom: 16 }}>
+                {editAvatar ? (
+                  <Image source={{ uri: editAvatar }} style={styles.bigAvatar} />
+                ) : (
+                  <View style={[styles.bigAvatar, { backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ fontSize: 36 }}>👤</Text>
+                  </View>
+                )}
+                <Text style={{ color: '#059669', fontWeight: '700', fontSize: 13, marginTop: 6 }}>📷 ছবি পরিবর্তন করুন</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.fieldLabel}>আপনার নাম</Text>
+              <TextInput style={styles.lightInput} value={editName} onChangeText={setEditName} placeholder="নাম" />
+
+              <Text style={styles.fieldLabel}>মোবাইল নম্বর</Text>
+              <TextInput style={styles.lightInput} value={editPhone} onChangeText={setEditPhone} keyboardType="phone-pad" placeholder="017..." />
+
+              <Text style={styles.fieldLabel}>🩷 সেভ করা বিকাশ (bKash) নম্বর</Text>
+              <TextInput style={styles.lightInput} value={editBkash} onChangeText={setEditBkash} keyboardType="phone-pad" placeholder="017XXXXXXXX" />
+
+              <Text style={styles.fieldLabel}>🟠 সেভ করা নগদ (Nagad) নম্বর</Text>
+              <TextInput style={styles.lightInput} value={editNagad} onChangeText={setEditNagad} keyboardType="phone-pad" placeholder="018XXXXXXXX" />
+
+              <TouchableOpacity style={[styles.uberBlackBtn, { marginTop: 14 }]} onPress={saveProfile} disabled={loading}>
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.uberBlackBtnText}>প্রোফাইল সেভ করুন</Text>}
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.cancelBtn, { marginTop: 10 }]} onPress={() => { setProfileOpen(false); setUser(null); setToken(''); }}>
+                <Text style={styles.cancelBtnText}>লগআউট করুন</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -380,20 +568,25 @@ const styles = StyleSheet.create({
 
   container: { flex: 1, backgroundColor: '#fff' },
   floatingTop: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
-  pillBtn: { backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
+  pillBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 24, elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
+  miniAvatar: { width: 24, height: 24, borderRadius: 12 },
   pillText: { color: '#0f172a', fontWeight: '700', fontSize: 13 },
   circleBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
 
   sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 22, paddingTop: 10, elevation: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12 },
-  handle: { width: 42, height: 4, backgroundColor: '#cbd5e1', borderRadius: 4, alignSelf: 'center', marginBottom: 12 },
+  handle: { width: 42, height: 4, backgroundColor: '#cbd5e1', borderRadius: 4, alignSelf: 'center', marginBottom: 10 },
+
+  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  modePill: { flex: 1, paddingVertical: 7, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center' },
+  modePillActive: { backgroundColor: '#0f172a' },
+  modeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
 
   routeBox: { backgroundColor: '#f1f5f9', borderRadius: 16, padding: 12, marginBottom: 8 },
   routeLineRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   greenDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#10b981' },
   blackSquare: { width: 10, height: 10, backgroundColor: '#0f172a' },
-  pickupText: { color: '#475569', fontSize: 13, fontWeight: '600' },
   routeDivider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 8, marginLeft: 20 },
-  whereInput: { flex: 1, color: '#0f172a', fontSize: 14, fontWeight: '600', paddingVertical: 2 },
+  whereInput: { flex: 1, color: '#0f172a', fontSize: 13, fontWeight: '600', paddingVertical: 2 },
   searchItem: { padding: 12, backgroundColor: '#f8fafc', borderRadius: 10, marginBottom: 4, borderWidth: 1, borderColor: '#e2e8f0' },
 
   metaBadge: { backgroundColor: '#ecfdf5', padding: 8, borderRadius: 10, alignItems: 'center', marginTop: 4 },
@@ -417,9 +610,14 @@ const styles = StyleSheet.create({
   uberBlackBtn: { backgroundColor: '#000', paddingVertical: 15, borderRadius: 14, alignItems: 'center' },
   uberBlackBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
-  statusHeader: { alignItems: 'center', paddingVertical: 4 },
+  radarRing: { position: 'absolute', width: 54, height: 54, borderRadius: 27, backgroundColor: '#10b981' },
+  radarCenter: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', elevation: 4 },
+
+  statusHeader: { alignItems: 'center', gap: 2 },
   statusTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a' },
-  statusSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  statusSub: { fontSize: 13, color: '#475569' },
+  routeSummary: { fontSize: 11, color: '#64748b', marginTop: 2 },
+
   driverBox: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f1f5f9', padding: 12, borderRadius: 14 },
   driverAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
   driverName: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
@@ -427,7 +625,12 @@ const styles = StyleSheet.create({
   receiptCard: { backgroundColor: '#f8fafc', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', gap: 6 },
   receiptAmt: { fontSize: 26, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
   receiptInfo: { fontSize: 12, color: '#64748b', textAlign: 'center' },
-  lightInput: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', color: '#0f172a', padding: 12, borderRadius: 10, fontSize: 14 },
+  lightInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', color: '#0f172a', padding: 11, borderRadius: 10, fontSize: 14, marginBottom: 8 },
   cancelBtn: { backgroundColor: '#ffe4e6', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
-  cancelBtnText: { color: '#e11d48', fontWeight: '700', fontSize: 14 }
+  cancelBtnText: { color: '#e11d48', fontWeight: '700', fontSize: 14 },
+
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, maxHeight: '85%' },
+  bigAvatar: { width: 84, height: 84, borderRadius: 42 },
+  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 4, marginTop: 4 }
 });

@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recenterCount, onSelectDrop }) {
+export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recenterCount, onMapPress }) {
   const webRef = useRef(null);
 
   const html = `
@@ -14,7 +14,7 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
       <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
       <style>
         body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #f1f5f9; }
-        .pickup-dot { width: 18px; height: 18px; background: #10b981; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
+        .pickup-dot { width: 20px; height: 20px; background: #10b981; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
         .drop-pin { font-size: 28px; line-height: 28px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); }
         .car-pin { font-size: 28px; line-height: 28px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
       </style>
@@ -59,7 +59,7 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
 
         map.on('click', (e) => {
           window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'SELECT_DROP', lat: e.lngLat.lat, lng: e.lngLat.lng
+            type: 'MAP_CLICK', lat: e.lngLat.lat, lng: e.lngLat.lng
           }));
         });
 
@@ -139,8 +139,8 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
         onMessage={(event) => {
           try {
             const msg = JSON.parse(event.nativeEvent.data);
-            if (msg.type === 'SELECT_DROP' && onSelectDrop) {
-              onSelectDrop({ lat: msg.lat, lng: msg.lng });
+            if (msg.type === 'MAP_CLICK' && onMapPress) {
+              onMapPress({ lat: msg.lat, lng: msg.lng });
             }
           } catch {}
         }}
