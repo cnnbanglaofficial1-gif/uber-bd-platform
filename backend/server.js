@@ -14,16 +14,19 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 
-// অটোমেটিক ডাটাবেস কলাম আপগ্রেড (ছবি, বিকাশ/নগদ, ডকুমেন্ট ও ভেরিফিকেশন)
+// অটোমেটিক ডাটাবেস কলাম আপগ্রেড
 pool.query(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS bkash_number VARCHAR(20);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS nagad_number VARCHAR(20);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(120);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
   ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS nid_photo TEXT;
   ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS license_photo TEXT;
   ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS vehicle_paper_photo TEXT;
   ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) DEFAULT 'PENDING';
   ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+  ALTER TABLE rides ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
 `).catch((e) => console.error('Migration note:', e.message));
 
 const server = http.createServer(app);
@@ -40,7 +43,7 @@ function auth(roles = []) {
       }
       const uRes = await pool.query('SELECT is_active FROM users WHERE id = $1', [decoded.id]);
       if (!uRes.rows.length || !uRes.rows[0].is_active) {
-        return res.status(403).json({ error: 'আপনার অ্যাকাউন্টটি সাসপেন্ড (Deactivated) করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
+        return res.status(403).json({ error: 'আপনার অ্যাকাউন্টটি সাসপেন্ড করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
       }
       req.user = decoded;
       next();
@@ -54,16 +57,16 @@ app.get('/', (req, res) => {
   res.json({ status: 'Uber BD Platform Backend Running 🚀', time: new Date() });
 });
 
-// ১. REGISTER, LOGIN & PROFILE
+// ১. REGISTER, LOGIN, PROFILE & PASSWORD CHANGE
 app.post('/api/auth/register', async (req, res) => {
-  const { name, phone, password, role, vehicle_type, vehicle_model, plate_number, license_number } = req.body;
+  const { name, phone, email, password, role, vehicle_type, vehicle_model, plate_number, license_number } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const hash = await bcrypt.hash(password, 10);
     const userRes = await client.query(
-      'INSERT INTO users (name, phone, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, phone, role, is_active, avatar_url, bkash_number, nagad_number',
-      [name, phone, hash, role || 'RIDER']
+      'INSERT INTO users (name, phone, email, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number',
+      [name, phone, email || null, hash, role || 'RIDER']
     );
     const user = userRes.rows[0];
     await client.query('INSERT INTO wallets (user_id) VALUES ($1)', [user.id]);
@@ -98,7 +101,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'মোবাইল নম্বর বা পাসওয়ার্ড ভুল' });
     }
     if (!user.is_active) {
-      return res.status(403).json({ error: 'আপনার অ্যাকাউন্টটি অ্যাডমিন দ্বারা সাসপেন্ড (Deactivated) করা হয়েছে।' });
+      return res.status(403).json({ error: 'আপনার অ্যাকাউন্টটি অ্যাডমিন দ্বারা সাসপেন্ড করা হয়েছে।' });
     }
     let driverProfile = null;
     if (user.role === 'DRIVER') {
@@ -108,9 +111,9 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
     res.json({
       user: {
-        id: user.id, name: user.name, phone: user.phone, role: user.role, is_active: user.is_active,
-        avatar_url: user.avatar_url, bkash_number: user.bkash_number, nagad_number: user.nagad_number,
-        driverProfile
+        id: user.id, name: user.name, phone: user.phone, email: user.email, gender: user.gender,
+        role: user.role, is_active: user.is_active, avatar_url: user.avatar_url,
+        bkash_number: user.bkash_number, nagad_number: user.nagad_number, driverProfile
       },
       token
     });
@@ -120,18 +123,20 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.put('/api/auth/profile', auth(['RIDER', 'DRIVER', 'ADMIN']), async (req, res) => {
-  const { name, phone, avatar_url, bkash_number, nagad_number } = req.body;
+  const { name, phone, email, gender, avatar_url, bkash_number, nagad_number } = req.body;
   try {
     const result = await pool.query(
       `UPDATE users SET
         name = COALESCE($1, name),
         phone = COALESCE($2, phone),
-        avatar_url = COALESCE($3, avatar_url),
-        bkash_number = COALESCE($4, bkash_number),
-        nagad_number = COALESCE($5, nagad_number)
-       WHERE id = $6
-       RETURNING id, name, phone, role, is_active, avatar_url, bkash_number, nagad_number`,
-      [name || null, phone || null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
+        email = COALESCE($3, email),
+        gender = COALESCE($4, gender),
+        avatar_url = COALESCE($5, avatar_url),
+        bkash_number = COALESCE($6, bkash_number),
+        nagad_number = COALESCE($7, nagad_number)
+       WHERE id = $8
+       RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number`,
+      [name || null, phone || null, email ?? null, gender ?? null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
     );
     res.json({ user: result.rows[0] });
   } catch (err) {
@@ -139,9 +144,43 @@ app.put('/api/auth/profile', auth(['RIDER', 'DRIVER', 'ADMIN']), async (req, res
   }
 });
 
-// ২. DRIVER PROFILE & DOCUMENTS UPLOAD
+app.post('/api/auth/change-password', auth(['RIDER', 'DRIVER', 'ADMIN']), async (req, res) => {
+  const { old_password, new_password } = req.body;
+  try {
+    const resU = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (!(await bcrypt.compare(old_password, resU.rows[0].password_hash))) {
+      return res.status(400).json({ error: 'বর্তমান পাসওয়ার্ড ভুল হয়েছে' });
+    }
+    const newHash = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.user.id]);
+    res.json({ success: true, message: 'পাসওয়ার্ড পরিবর্তন হয়েছে!' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ২. NEARBY ONLINE DRIVERS (ম্যাপে চলন্ত গাড়ি দেখানোর জন্য)
+app.get('/api/drivers/nearby', async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.json({ drivers: [] });
+  try {
+    const types = ['BIKE', 'CNG', 'CAR'];
+    const all = [];
+    for (const t of types) {
+      const list = await redis.georadius(`drivers:online:${t}`, Number(lng), Number(lat), 10, 'km', 'WITHCOORD');
+      for (const item of list) {
+        all.push({ id: item[0], vehicle_type: t, lng: Number(item[1][0]), lat: Number(item[1][1]) });
+      }
+    }
+    res.json({ drivers: all });
+  } catch {
+    res.json({ drivers: [] });
+  }
+});
+
+// ৩. DRIVER PROFILE & DOCUMENTS
 app.get('/api/driver/profile', auth(['DRIVER']), async (req, res) => {
-  const u = await pool.query('SELECT id, name, phone, role, is_active, avatar_url, bkash_number, nagad_number FROM users WHERE id = $1', [req.user.id]);
+  const u = await pool.query('SELECT id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number FROM users WHERE id = $1', [req.user.id]);
   const dp = await pool.query('SELECT * FROM driver_profiles WHERE user_id = $1', [req.user.id]);
   res.json({ user: { ...u.rows[0], driverProfile: dp.rows[0] || null } });
 });
@@ -154,7 +193,7 @@ app.put('/api/driver/profile', auth(['DRIVER']), async (req, res) => {
     const uRes = await client.query(
       `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_url = COALESCE($3, avatar_url),
        bkash_number = COALESCE($4, bkash_number), nagad_number = COALESCE($5, nagad_number) WHERE id = $6
-       RETURNING id, name, phone, role, is_active, avatar_url, bkash_number, nagad_number`,
+       RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number`,
       [name || null, phone || null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
     );
 
@@ -185,7 +224,7 @@ app.put('/api/driver/profile', auth(['DRIVER']), async (req, res) => {
   }
 });
 
-// ৩. ফ্রি OSRM ম্যাপ দিয়ে রুট ও আনুমানিক ভাড়া হিসাব
+// ৪. ফ্রি OSRM রুট ও ভাড়া হিসাব
 app.post('/api/rides/estimate', async (req, res) => {
   const { pickup_lat, pickup_lng, drop_lat, drop_lng, promo_code } = req.body;
   try {
@@ -237,7 +276,7 @@ app.post('/api/rides/estimate', async (req, res) => {
   }
 });
 
-// ৪. RIDE REQUEST, AVAILABLE, ACCEPT, START, CANCEL & COMPLETE
+// ৫. RIDE REQUEST, HISTORY, ACTIVE, ACCEPT, START, CANCEL & COMPLETE
 app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
   const { vehicle_type, pickup_lat, pickup_lng, pickup_address, drop_lat, drop_lng, drop_address, estimated_fare, payment_method, promo_code } = req.body;
   try {
@@ -268,6 +307,24 @@ app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
   }
 });
 
+app.get('/api/rides/history', auth(['RIDER', 'DRIVER']), async (req, res) => {
+  try {
+    const col = req.user.role === 'RIDER' ? 'r.rider_id' : 'r.driver_id';
+    const result = await pool.query(
+      `SELECT r.*, du.name AS driver_name, dp.plate_number
+       FROM rides r
+       LEFT JOIN users du ON r.driver_id = du.id
+       LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id
+       WHERE ${col} = $1 AND r.status IN ('COMPLETED','CANCELLED')
+       ORDER BY r.created_at DESC LIMIT 25`,
+      [req.user.id]
+    );
+    res.json({ rides: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/rides/available', auth(['DRIVER']), async (req, res) => {
   try {
     const dp = await pool.query('SELECT vehicle_type, is_approved, is_online FROM driver_profiles WHERE user_id = $1', [req.user.id]);
@@ -292,7 +349,9 @@ app.get('/api/rides/my-active', auth(['RIDER', 'DRIVER']), async (req, res) => {
     const result = await pool.query(
       `SELECT r.*,
         ru.name AS rider_name, ru.phone AS rider_phone,
-        du.name AS driver_name, du.phone AS driver_phone, dp.plate_number, dp.vehicle_model
+        du.name AS driver_name, du.phone AS driver_phone, du.avatar_url AS driver_avatar,
+        dp.plate_number, dp.vehicle_model, dp.rating AS driver_rating,
+        (SELECT COUNT(*) FROM rides WHERE driver_id = r.driver_id AND status = 'COMPLETED') AS driver_trips
        FROM rides r
        LEFT JOIN users ru ON r.rider_id = ru.id
        LEFT JOIN users du ON r.driver_id = du.id
@@ -320,7 +379,9 @@ app.post('/api/rides/:id/accept', auth(['DRIVER']), async (req, res) => {
     const ride = result.rows[0];
 
     const fullRide = await pool.query(
-      `SELECT r.*, du.name AS driver_name, du.phone AS driver_phone, dp.plate_number, dp.vehicle_model,
+      `SELECT r.*, du.name AS driver_name, du.phone AS driver_phone, du.avatar_url AS driver_avatar,
+       dp.plate_number, dp.vehicle_model, dp.rating AS driver_rating,
+       (SELECT COUNT(*) FROM rides WHERE driver_id = r.driver_id AND status = 'COMPLETED') AS driver_trips,
        ru.name AS rider_name, ru.phone AS rider_phone
        FROM rides r
        LEFT JOIN users du ON r.driver_id = du.id
@@ -350,10 +411,11 @@ app.post('/api/rides/:id/start', auth(['DRIVER']), async (req, res) => {
 });
 
 app.post('/api/rides/:id/cancel', auth(['RIDER', 'DRIVER']), async (req, res) => {
+  const { reason } = req.body || {};
   try {
     const result = await pool.query(
-      "UPDATE rides SET status = 'CANCELLED' WHERE id = $1 AND status IN ('SEARCHING','ACCEPTED') RETURNING *",
-      [req.params.id]
+      "UPDATE rides SET status = 'CANCELLED', cancel_reason = $1 WHERE id = $2 AND status IN ('SEARCHING','ACCEPTED') RETURNING *",
+      [reason || null, req.params.id]
     );
     if (!result.rows.length) return res.status(400).json({ error: 'রাইড বাতিল করা যাচ্ছে না' });
     const ride = result.rows[0];
@@ -458,7 +520,7 @@ app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
   }
 });
 
-// ৫. bKash / Nagad পেমেন্ট
+// ৬. bKash / Nagad পেমেন্ট
 app.post('/api/rides/:id/pay', auth(['RIDER']), async (req, res) => {
   const { method, trx_id } = req.body;
   const client = await pool.connect();
@@ -490,12 +552,12 @@ app.post('/api/rides/:id/pay', auth(['RIDER']), async (req, res) => {
   }
 });
 
-// ৬. DRIVER STATUS, QUESTS, WALLET & WITHDRAW
+// ৭. DRIVER STATUS, QUESTS, WALLET & WITHDRAW
 app.post('/api/driver/status', auth(['DRIVER']), async (req, res) => {
   const { is_online, vehicle_type } = req.body;
-  const dp = await pool.query('SELECT is_approved, verification_status, vehicle_type FROM driver_profiles WHERE user_id = $1', [req.user.id]);
+  const dp = await pool.query('SELECT is_approved, vehicle_type FROM driver_profiles WHERE user_id = $1', [req.user.id]);
   if (is_online && !dp.rows[0]?.is_approved) {
-    return res.status(403).json({ error: 'আপনার ডকুমেন্ট এখনো অ্যাপ্রুভ হয়নি। প্রোফাইল থেকে ডকুমেন্ট আপলোড করে অ্যাডমিনের অনুমোদনের অপেক্ষা করুন।' });
+    return res.status(403).json({ error: 'আপনার ডকুমেন্ট এখনো অ্যাপ্রুভ হয়নি।' });
   }
   await pool.query('UPDATE driver_profiles SET is_online = $1 WHERE user_id = $2', [is_online, req.user.id]);
   if (!is_online) {
@@ -551,7 +613,7 @@ app.post('/api/driver/withdraw', auth(['DRIVER']), async (req, res) => {
   }
 });
 
-// ৭. ADMIN APIS (DRIVERS VERIFY, SUSPEND/ACTIVE, RATES, PROMOS, WITHDRAWS)
+// ৮. ADMIN APIS
 app.get('/api/admin/overview', auth(['ADMIN']), async (req, res) => {
   const rides = await pool.query('SELECT COUNT(*) AS total_rides, COALESCE(SUM(platform_commission),0) AS total_commission FROM rides');
   const rates = await pool.query('SELECT * FROM vehicle_rates');
@@ -572,7 +634,7 @@ app.get('/api/admin/overview', auth(['ADMIN']), async (req, res) => {
 });
 
 app.post('/api/admin/drivers/:id/verify', auth(['ADMIN']), async (req, res) => {
-  const { status, reason } = req.body; // 'APPROVED' | 'REJECTED'
+  const { status, reason } = req.body;
   const isApproved = status === 'APPROVED';
   const result = await pool.query(
     `UPDATE driver_profiles SET verification_status = $1, is_approved = $2, rejection_reason = $3,
@@ -628,7 +690,7 @@ app.post('/api/admin/withdraws/:id/approve', auth(['ADMIN']), async (req, res) =
   res.json(result.rows[0]);
 });
 
-// ৮. REAL-TIME SOCKET
+// ৯. REAL-TIME SOCKET
 io.on('connection', (socket) => {
   socket.on('join_room', ({ role, userId }) => {
     socket.join(`${role.toLowerCase()}_${userId}`);
@@ -647,3 +709,4 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
