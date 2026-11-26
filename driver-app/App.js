@@ -11,6 +11,8 @@ import { io } from 'socket.io-client';
 import DriverMap from './DriverMap';
 import DriverMenus from './DriverMenus';
 import ZoddirLogo from './ZoddirLogo';
+import { PaymentLogo } from './BrandIcons';
+import { STRINGS } from './i18n';
 
 const API = 'https://uber-bd-platform.onrender.com';
 const TOP_PAD = Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 48;
@@ -23,16 +25,13 @@ try {
   });
 } catch {}
 
-// প্রিমিয়াম অনলাইন স্ক্যানিং অ্যানিমেশন
-function OnlineScanner() {
+function OnlineScanner({ title, sub }) {
   const pulse = useRef(new Animated.Value(0)).current;
   const sweep = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
     Animated.loop(Animated.timing(pulse, { toValue: 1, duration: 1600, useNativeDriver: true })).start();
     Animated.loop(Animated.timing(sweep, { toValue: 1, duration: 1400, useNativeDriver: true })).start();
   }, []);
-
   const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 2.1] });
   const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.75, 0] });
   const sweepX = sweep.interpolate({ inputRange: [0, 1], outputRange: [-120, 260] });
@@ -45,18 +44,19 @@ function OnlineScanner() {
           <View style={styles.scanCore}><MaterialCommunityIcons name="radar" size={20} color="#0F172A" /></View>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 15 }}>অনলাইনে সক্রিয় • রাইড খুঁজছে</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 11, marginTop: 2 }}>নতুন রাইড আসা মাত্রই পপ-আপ ও শব্দ বাজবে</Text>
+          <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 15 }}>{title}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 11, marginTop: 2 }}>{sub}</Text>
         </View>
       </View>
-      <View style={styles.sweepTrack}>
-        <Animated.View style={[styles.sweepBar, { transform: [{ translateX: sweepX }] }]} />
-      </View>
+      <View style={styles.sweepTrack}><Animated.View style={[styles.sweepBar, { transform: [{ translateX: sweepX }] }]} /></View>
     </View>
   );
 }
 
 export default function App() {
+  const [lang, setLang] = useState('en');
+  const t = STRINGS[lang];
+
   const [user, setUser] = useState(null);
   const [token, setToken] = useState('');
   const [isRegister, setIsRegister] = useState(false);
@@ -70,8 +70,6 @@ export default function App() {
   const [tab, setTab] = useState('HOME');
   const [menuScreen, setMenuScreen] = useState(null);
   const [inboxTab, setInboxTab] = useState('NOTIF');
-  const [showEarnDetail, setShowEarnDetail] = useState(false);
-  const [lang, setLang] = useState('bn');
   const [nightMode, setNightMode] = useState(false);
 
   const [isOnline, setIsOnline] = useState(false);
@@ -79,6 +77,7 @@ export default function App() {
   const [recenterCount, setRecenterCount] = useState(0);
   const [availableRides, setAvailableRides] = useState([]);
   const [skippedIds, setSkippedIds] = useState([]);
+  const [offerSec, setOfferSec] = useState(10);
   const [activeRide, setActiveRide] = useState(null);
   const [routeCoords, setRouteCoords] = useState([]);
   const [tripSec, setTripSec] = useState(0);
@@ -87,9 +86,12 @@ export default function App() {
   const [wallet, setWallet] = useState({ balance: 0, total_earned: 0, total_withdrawn: 0 });
   const [txns, setTxns] = useState([]);
   const [withdraws, setWithdraws] = useState([]);
+  const [duePayments, setDuePayments] = useState([]);
   const [quests, setQuests] = useState([]);
 
   const notifiedIds = useRef(new Set());
+  const visibleOffers = availableRides.filter((r) => !skippedIds.includes(r.id));
+  const currentOffer = visibleOffers[0] || null;
 
   useEffect(() => {
     (async () => {
@@ -107,7 +109,23 @@ export default function App() {
     return () => sub.remove();
   }, []);
 
-  // লাইভ ট্রিপ টাইমার
+  // ১০ সেকেন্ডের অফার কাউন্টডাউন (১০ সেকেন্ড না ধরলে পরের ড্রাইভারের কাছে যাবে)
+  useEffect(() => {
+    if (!currentOffer) { setOfferSec(10); return; }
+    setOfferSec(10);
+    const iv = setInterval(() => {
+      setOfferSec((prev) => {
+        if (prev <= 1) {
+          clearInterval(iv);
+          declineRide(currentOffer.id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [currentOffer?.id]);
+
   useEffect(() => {
     if (activeRide?.status === 'STARTED' && activeRide.started_at) {
       const iv = setInterval(() => {
@@ -117,15 +135,12 @@ export default function App() {
     } else setTripSec(0);
   }, [activeRide?.status, activeRide?.started_at]);
 
-  // অ্যাক্টিভ রাইডের OSRM রাস্তার রুট লাইন আঁকা
   useEffect(() => {
     if (!activeRide) return setRouteCoords([]);
     const from = activeRide.status === 'ACCEPTED' ? driverLoc : { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng };
     const to = activeRide.status === 'ACCEPTED' ? { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng } : { lat: activeRide.drop_lat, lng: activeRide.drop_lng };
     axios.get(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`)
-      .then((r) => {
-        if (r.data.routes?.length) setRouteCoords(r.data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]));
-      })
+      .then((r) => { if (r.data.routes?.length) setRouteCoords(r.data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng])); })
       .catch(() => setRouteCoords([[from.lat, from.lng], [to.lat, to.lng]]));
   }, [activeRide?.id, activeRide?.status]);
 
@@ -136,8 +151,8 @@ export default function App() {
     try {
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: `🚕 Zoddir নতুন ${ride.vehicle_type} রাইড! (৳${ride.estimated_fare})`,
-          body: `${ride.pickup_address} → ${ride.drop_address}`,
+          title: `New ${ride.vehicle_type} Ride (BDT ${ride.estimated_fare})`,
+          body: `${ride.pickup_address} -> ${ride.drop_address}`,
           sound: 'default', priority: Notifications.AndroidNotificationPriority.MAX
         },
         trigger: null
@@ -152,7 +167,7 @@ export default function App() {
       setUser(res.data.user);
       setIsOnline(!!res.data.user?.driverProfile?.is_online);
     } catch (err) {
-      if (err.response?.status === 403) { Alert.alert('সাসপেন্ড', err.response.data.error); setUser(null); setToken(''); }
+      if (err.response?.status === 403) { Alert.alert('Suspended', err.response.data.error); setUser(null); setToken(''); }
     }
   };
 
@@ -163,6 +178,7 @@ export default function App() {
       setWallet(res.data.wallet || { balance: 0, total_earned: 0, total_withdrawn: 0 });
       setTxns(res.data.transactions || []);
       setWithdraws(res.data.withdraws || []);
+      setDuePayments(res.data.duePayments || []);
     } catch {}
   };
 
@@ -183,9 +199,9 @@ export default function App() {
       setAvailableRides((prev) => [ride, ...prev.filter((r) => r.id !== ride.id)]);
       triggerRidePopup(ride);
     });
-    socket.on('ride_cancelled', () => { setActiveRide(null); Alert.alert('বাতিল', 'যাত্রী রাইডটি বাতিল করেছেন'); });
+    socket.on('ride_cancelled', () => { setActiveRide(null); Alert.alert('Cancelled', 'Rider cancelled the trip'); });
     socket.on('payment_received', (d) => {
-      Alert.alert('পেমেন্ট জমা হয়েছে 💰', `${d.method} থেকে ৳${d.amount} আপনার Zoddir ওয়ালেটে যুক্ত হয়েছে!`);
+      Alert.alert('Payment Received', `${d.method} BDT ${d.amount} added to your wallet!`);
       loadWallet();
     });
 
@@ -213,37 +229,37 @@ export default function App() {
         const act = await axios.get(`${API}/api/rides/my-active`, { headers: { Authorization: `Bearer ${token}` } });
         setActiveRide(act.data.ride || null);
         if (isOnline && !act.data.ride) {
-          const av = await axios.get(`${API}/api/rides/available`, { headers: { Authorization: `Bearer ${token}` } });
+          const av = await axios.get(`${API}/api/rides/available?lat=${driverLoc.lat}&lng=${driverLoc.lng}`, { headers: { Authorization: `Bearer ${token}` } });
           setAvailableRides(av.data.rides || []);
           if (av.data.rides?.length) triggerRidePopup(av.data.rides[0]);
         }
       } catch {}
-    }, 5000);
+    }, 4000);
 
     return () => { socket.disconnect(); clearInterval(gpsTimer); clearInterval(pollTimer); };
   }, [user, token, isOnline, activeRide]);
 
   const handleAuth = async () => {
-    if (!phone || !password) return Alert.alert('তথ্য দিন', 'মোবাইল নম্বর ও পাসওয়ার্ড লিখুন');
+    if (!phone || !password) return Alert.alert('Required', 'Enter mobile & password');
     setLoading(true);
     try {
       const ep = isRegister ? '/api/auth/register' : '/api/auth/login';
       const res = await axios.post(`${API}${ep}`, {
-        name: name || 'ড্রাইভার', phone, password, role: 'DRIVER', vehicle_type: regVehicle, plate_number: regPlate
+        name: name || 'Driver', phone, password, role: 'DRIVER', vehicle_type: regVehicle, plate_number: regPlate
       });
-      if (res.data.user.role !== 'DRIVER') return Alert.alert('ভুল অ্যাকাউন্ট', 'এটি ড্রাইভার অ্যাকাউন্ট নয়');
+      if (res.data.user.role !== 'DRIVER') return Alert.alert('Error', 'Not a driver account');
       setToken(res.data.token); setUser(res.data.user);
       setIsOnline(!!res.data.user?.driverProfile?.is_online);
-    } catch (err) { Alert.alert('ব্যর্থ', err.response?.data?.error || 'লগইন হয়নি'); }
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Login failed'); }
     setLoading(false);
   };
 
   const toggleOnline = async (val) => {
     try {
-      await axios.post(`${API}/api/driver/status`, { is_online: val, vehicle_type: user.driverProfile?.vehicle_type }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post(`${API}/api/driver/status`, { is_online: val }, { headers: { Authorization: `Bearer ${token}` } });
       setIsOnline(val);
-      if (!val) setAvailableRides([]);
-    } catch (err) { Alert.alert('অনলাইন যাওয়া যাচ্ছে না', err.response?.data?.error || 'ডকুমেন্ট অনুমোদন প্রয়োজন'); }
+      if (!val) { setAvailableRides([]); setSkippedIds([]); }
+    } catch (err) { Alert.alert('Verification Needed', err.response?.data?.error || 'Approval required'); }
   };
 
   const acceptRide = async (id) => {
@@ -251,8 +267,14 @@ export default function App() {
     try {
       const res = await axios.post(`${API}/api/rides/${id}/accept`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setActiveRide(res.data.ride); setAvailableRides([]);
-    } catch (err) { Alert.alert('ব্যর্থ', err.response?.data?.error || 'নেওয়া যায়নি'); }
+    } catch (err) { Alert.alert('Unavailable', err.response?.data?.error || 'Ride already taken'); }
     setLoading(false);
+  };
+
+  const declineRide = async (id) => {
+    setSkippedIds((prev) => [...prev, id]);
+    setAvailableRides((prev) => prev.filter((r) => r.id !== id));
+    try { await axios.post(`${API}/api/rides/${id}/decline`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch {}
   };
 
   const startRide = async () => {
@@ -260,7 +282,7 @@ export default function App() {
     try {
       const res = await axios.post(`${API}/api/rides/${activeRide.id}/start`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setActiveRide({ ...activeRide, ...res.data.ride });
-    } catch (err) { Alert.alert('ব্যর্থ', err.response?.data?.error || 'শুরু হয়নি'); }
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
   };
 
@@ -272,7 +294,7 @@ export default function App() {
       setTripReceipt({ ...r, new_balance: res.data.wallet_balance });
       setActiveRide(r.payment_method === 'CASH' ? null : r);
       loadWallet(); loadQuests();
-    } catch (err) { Alert.alert('ব্যর্থ', err.response?.data?.error || 'শেষ হয়নি'); }
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
   };
 
@@ -283,13 +305,12 @@ export default function App() {
         <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
         <View style={styles.authBanner}>
           <ZoddirLogo size={84} />
-          <Text style={{ fontSize: 12, color: '#A3E635', marginTop: 4, fontWeight: '700' }}>আয় করুন আপনার নিজের সময়ে</Text>
+          <Text style={{ fontSize: 12, color: '#A3E635', marginTop: 4, fontWeight: '700' }}>{t.brandSub}</Text>
         </View>
         <ScrollView style={{ padding: 22 }}>
           {isRegister && (
             <>
-              <TextInput style={styles.input} placeholder="আপনার পূর্ণ নাম" value={name} onChangeText={setName} />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>গাড়ির ধরন বেছে নিন:</Text>
+              <TextInput style={styles.input} placeholder="Full Name" value={name} onChangeText={setName} />
               <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                 {['BIKE', 'CNG', 'CAR'].map((v) => (
                   <TouchableOpacity key={v} onPress={() => setRegVehicle(v)} style={[styles.vChip, regVehicle === v && { backgroundColor: '#0F172A' }]}>
@@ -297,18 +318,18 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TextInput style={styles.input} placeholder="গাড়ির প্লেট নম্বর (DHM-GA-...)" value={regPlate} onChangeText={setRegPlate} />
+              <TextInput style={styles.input} placeholder="Plate Number (DHM-GA-...)" value={regPlate} onChangeText={setRegPlate} />
             </>
           )}
-          <TextInput style={styles.input} placeholder="মোবাইল নম্বর (017...)" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-          <TextInput style={styles.input} placeholder="পাসওয়ার্ড" secureTextEntry value={password} onChangeText={setPassword} />
+          <TextInput style={styles.input} placeholder="Mobile (017...)" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+          <TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
 
           <TouchableOpacity style={styles.navyBtn} onPress={handleAuth} disabled={loading}>
-            {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>{isRegister ? 'রেজিস্ট্রেশন করুন' : 'চালিয়ে যান (Login)'}</Text>}
+            {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>{isRegister ? t.regBtn : t.loginBtn}</Text>}
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => setIsRegister(!isRegister)} style={{ marginTop: 16, alignItems: 'center' }}>
-            <Text style={{ color: '#00D2B8', fontWeight: '800' }}>{isRegister ? 'আগে থেকেই অ্যাকাউন্ট আছে? লগইন করুন' : 'নতুন ড্রাইভার? এখানে অ্যাকাউন্ট খুলুন'}</Text>
+            <Text style={{ color: '#00D2B8', fontWeight: '800' }}>{isRegister ? t.haveAcc : t.newAcc}</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -319,44 +340,42 @@ export default function App() {
   const isVerified = !!dp.is_approved;
   const themeBg = nightMode ? '#0F172A' : '#fff';
   const themeTxt = nightMode ? '#f8fafc' : '#0F172A';
-  const visibleOffers = availableRides.filter((r) => !skippedIds.includes(r.id));
   const timerTxt = `${String(Math.floor(tripSec / 60)).padStart(2, '0')}:${String(tripSec % 60).padStart(2, '0')}`;
 
   return (
     <View style={{ flex: 1, backgroundColor: themeBg }}>
       <StatusBar barStyle={nightMode ? 'light-content' : 'dark-content'} />
 
-      {/* TAB 1: হোম */}
+      {/* TAB 1: HOME */}
       {tab === 'HOME' && (
         <View style={{ flex: 1 }}>
           {!isVerified ? (
             <ScrollView style={{ flex: 1, paddingTop: TOP_PAD }}>
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 18, gap: 10 }}>
-                <TouchableOpacity style={styles.roundIcon} onPress={() => Alert.alert('সুরক্ষা', 'ইমার্জেন্সি সহায়তা: 999')}><Ionicons name="shield-checkmark" size={20} color="#0F172A" /></TouchableOpacity>
-                <TouchableOpacity style={styles.roundIcon} onPress={() => setMenuScreen('VEHICLES')}><Ionicons name="options" size={20} color="#0F172A" /></TouchableOpacity>
+                <TouchableOpacity style={styles.roundIcon} onPress={() => setMenuScreen('ACCOUNT')}><Ionicons name="settings-outline" size={20} color="#0F172A" /></TouchableOpacity>
               </View>
               <View style={{ padding: 20 }}>
-                <Text style={{ fontSize: 28, fontWeight: '900', color: themeTxt }}>অনলাইন যাওয়া যাচ্ছে না</Text>
+                <Text style={{ fontSize: 28, fontWeight: '900', color: themeTxt }}>{t.cannotOnline}</Text>
                 <View style={styles.alertBox}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                     <Ionicons name="warning" size={22} color="#dc2626" />
                     <View>
-                      <Text style={{ fontWeight: '800', fontSize: 16, color: '#0F172A' }}>প্রয়োজনীয় পদক্ষেপ (১)</Text>
-                      <Text style={{ fontSize: 12, color: '#dc2626' }}>সমাধান হয়ে গেলে অনলাইনে যান</Text>
+                      <Text style={{ fontWeight: '800', fontSize: 16, color: '#0F172A' }}>{t.reqAction}</Text>
+                      <Text style={{ fontSize: 12, color: '#dc2626' }}>{t.resolveFirst}</Text>
                     </View>
                   </View>
                   <TouchableOpacity style={styles.actionRow} onPress={() => setMenuScreen('DOCUMENTS')}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontWeight: '700', fontSize: 15, color: '#0F172A' }}>
-                        {dp.verification_status === 'REJECTED' ? `ডকুমেন্ট বাতিল: ${dp.rejection_reason || 'পুনরায় দিন'}` : 'ডকুমেন্ট যাচাই পেন্ডিং'}
+                        {dp.verification_status === 'REJECTED' ? `${t.docsRejected}: ${dp.rejection_reason || ''}` : t.docsPending}
                       </Text>
-                      <Text style={{ fontSize: 12, color: '#64748b' }}>ডকুমেন্ট আপলোড করে অ্যাডমিনের অনুমোদন নিন</Text>
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>{t.uploadDocsHint}</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={20} color="#0F172A" />
                   </TouchableOpacity>
                 </View>
                 <TouchableOpacity style={styles.grayPill} onPress={refreshProfile}>
-                  <Ionicons name="refresh" size={16} color="#0F172A" /><Text style={{ fontWeight: '800' }}>স্ট্যাটাস রিফ্রেশ করুন</Text>
+                  <Ionicons name="refresh" size={16} color="#0F172A" /><Text style={{ fontWeight: '800' }}>{t.refreshStatus}</Text>
                 </TouchableOpacity>
               </View>
               <View style={{ height: 220, marginHorizontal: 16, borderRadius: 20, overflow: 'hidden', marginBottom: 20 }}>
@@ -369,13 +388,10 @@ export default function App() {
                 driverLoc={driverLoc}
                 pickup={activeRide ? { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng } : null}
                 drop={activeRide ? { lat: activeRide.drop_lat, lng: activeRide.drop_lng } : null}
-                routeCoords={routeCoords}
-                isOnline={isOnline}
-                recenterCount={recenterCount}
-                dark={nightMode}
+                routeCoords={routeCoords} isOnline={isOnline} recenterCount={recenterCount} dark={nightMode}
               />
 
-              {/* Floating Top Controls */}
+              {/* Top Floating Bar: Profile + EARNING PILL (NOT minus balance!) + GPS */}
               <View style={[styles.mapFloating, { top: TOP_PAD }]}>
                 <TouchableOpacity style={styles.roundIcon} onPress={() => setMenuScreen('PROFILE')}>
                   {user.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: 38, height: 38, borderRadius: 19 }} />
@@ -383,7 +399,8 @@ export default function App() {
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.earnBadge} onPress={() => setMenuScreen('WALLET')}>
-                  <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 15 }}>৳ {wallet.balance}</Text>
+                  <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 15 }}>৳ {wallet.total_earned}</Text>
+                  {Number(wallet.balance) < 0 && <View style={styles.dueDot} />}
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.roundIcon} onPress={() => setRecenterCount((c) => c + 1)}>
@@ -391,40 +408,33 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* BOTTOM SHEET */}
               <View style={[styles.homeSheet, { backgroundColor: themeBg }]}>
                 {activeRide ? (
                   <View style={{ gap: 10 }}>
-                    {/* Stepped Progress Indicator */}
                     <View style={styles.stepRow}>
-                      {[
-                        { s: 'ACCEPTED', lbl: '১. পিকআপ' },
-                        { s: 'STARTED', lbl: '২. ট্রিপ চলছে' },
-                        { s: 'COMPLETED', lbl: '৩. পেমেন্ট' }
-                      ].map((st) => {
+                      {[{ s: 'ACCEPTED', lbl: '1. Pickup' }, { s: 'STARTED', lbl: '2. On Trip' }, { s: 'COMPLETED', lbl: '3. Payment' }].map((st) => {
                         const cur = activeRide.status === st.s;
-                        return (
-                          <View key={st.s} style={[styles.stepPill, cur && { backgroundColor: '#0F172A' }]}>
-                            <Text style={{ fontSize: 11, fontWeight: '800', color: cur ? '#00D2B8' : '#64748b' }}>{st.lbl}</Text>
-                          </View>
-                        );
+                        return <View key={st.s} style={[styles.stepPill, cur && { backgroundColor: '#0F172A' }]}><Text style={{ fontSize: 11, fontWeight: '800', color: cur ? '#00D2B8' : '#64748b' }}>{st.lbl}</Text></View>;
                       })}
                     </View>
 
                     {activeRide.status === 'STARTED' && (
                       <View style={styles.liveTimerBar}>
-                        <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 13 }}>● লাইভ GPS দূরত্ব রেকর্ড হচ্ছে</Text>
-                        <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 16 }}>⏱ {timerTxt}</Text>
+                        <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 13 }}>Live GPS Distance Active</Text>
+                        <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 16 }}>{timerTxt}</Text>
                       </View>
                     )}
 
                     <View style={styles.riderStrip}>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontWeight: '800', fontSize: 16, color: '#0F172A' }}>{activeRide.rider_name || 'যাত্রী'}</Text>
-                        <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>🟢 {activeRide.pickup_address} → 📍 {activeRide.drop_address}</Text>
-                        <Text style={{ fontSize: 14, fontWeight: '900', color: '#059669', marginTop: 4 }}>
-                          {activeRide.payment_method} • ৳{Number(activeRide.final_fare) > 0 ? activeRide.final_fare : activeRide.estimated_fare}
-                        </Text>
+                        <Text style={{ fontWeight: '800', fontSize: 16, color: '#0F172A' }}>{activeRide.rider_name || 'Rider'}</Text>
+                        <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{activeRide.pickup_address} → {activeRide.drop_address}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                          <PaymentLogo method={activeRide.payment_method} size={22} />
+                          <Text style={{ fontSize: 14, fontWeight: '900', color: '#059669' }}>
+                            ৳{Number(activeRide.final_fare) > 0 ? activeRide.final_fare : activeRide.estimated_fare}
+                          </Text>
+                        </View>
                       </View>
                       <View style={{ gap: 6 }}>
                         <TouchableOpacity style={[styles.roundIcon, { backgroundColor: '#A3E635' }]} onPress={() => Linking.openURL(`tel:${activeRide.rider_phone}`)}>
@@ -442,26 +452,26 @@ export default function App() {
                     {activeRide.status === 'ACCEPTED' && (
                       <TouchableOpacity style={styles.tealGoBtn} onPress={startRide} disabled={loading}>
                         <Ionicons name="play-circle" size={22} color="#0F172A" />
-                        <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 16 }}>ট্রিপ শুরু করুন (Start Trip)</Text>
+                        <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 16 }}>{t.startTrip}</Text>
                       </TouchableOpacity>
                     )}
                     {activeRide.status === 'STARTED' && (
                       <TouchableOpacity style={[styles.tealGoBtn, { backgroundColor: '#e11d48' }]} onPress={completeRide} disabled={loading}>
                         <Ionicons name="flag" size={20} color="#fff" />
-                        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>ট্রিপ শেষ করুন (Complete Trip)</Text>
+                        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{t.completeTrip}</Text>
                       </TouchableOpacity>
                     )}
                     {activeRide.status === 'COMPLETED' && (
-                      <Text style={{ textAlign: 'center', fontWeight: '700', color: '#d97706' }}>⏳ যাত্রীর {activeRide.payment_method} পেমেন্টের অপেক্ষায়...</Text>
+                      <Text style={{ textAlign: 'center', fontWeight: '700', color: '#d97706' }}>{t.awaitingPay}</Text>
                     )}
                   </View>
                 ) : !isOnline ? (
                   <View style={{ gap: 12 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 20, fontWeight: '800', color: themeTxt }}>সুযোগসমূহ</Text>
+                      <Text style={{ fontSize: 20, fontWeight: '800', color: themeTxt }}>{t.opportunities}</Text>
                       <TouchableOpacity onPress={() => setTab('EXPLORE')}><Ionicons name="arrow-forward" size={20} color={themeTxt} /></TouchableOpacity>
                     </View>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b' }}>DAC-এ ফ্লাইটের ব্যস্ততম সময় (9 AM - 3 PM)</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b' }}>{t.peakHours}</Text>
                     <View style={styles.barChartRow}>
                       {[25, 45, 85, 95, 80, 40, 65, 88].map((h, i) => (
                         <View key={i} style={[styles.barStick, { height: h * 0.52, backgroundColor: h > 70 ? '#0F172A' : '#cbd5e1' }]} />
@@ -469,41 +479,46 @@ export default function App() {
                     </View>
                     <TouchableOpacity style={styles.tealGoBtn} onPress={() => toggleOnline(true)}>
                       <MaterialCommunityIcons name="steering" size={22} color="#0F172A" />
-                      <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 16 }}>অনলাইন হন (Go Online)</Text>
+                      <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 16 }}>{t.goOnline}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <View style={{ gap: 10 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontWeight: '800', fontSize: 14, color: '#059669' }}>● Zoddir অনলাইন ({dp.vehicle_type})</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={styles.tealDot} />
+                        <Text style={{ fontWeight: '800', fontSize: 14, color: '#059669' }}>
+                          Zoddir Online ({dp.vehicle_type}{dp.allow_premium ? ' + Premium' : ''})
+                        </Text>
+                      </View>
                       <TouchableOpacity style={styles.offlineBtn} onPress={() => toggleOnline(false)}>
-                        <Text style={{ color: '#e11d48', fontWeight: '800', fontSize: 12 }}>অফলাইন হন</Text>
+                        <Text style={{ color: '#e11d48', fontWeight: '800', fontSize: 12 }}>{t.goOffline}</Text>
                       </TouchableOpacity>
                     </View>
 
-                    {visibleOffers.length === 0 ? (
-                      <OnlineScanner />
+                    {!currentOffer ? (
+                      <OnlineScanner title={t.scanning} sub={t.scanSub} />
                     ) : (
-                      <ScrollView style={{ maxHeight: 220 }}>
-                        {visibleOffers.map((r) => (
-                          <View key={r.id} style={styles.offerCard}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                              <View style={styles.farePill}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 18 }}>৳ {r.estimated_fare}</Text></View>
-                              <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 12 }}>{r.payment_method} • {r.vehicle_type}</Text>
-                            </View>
-                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>🟢 {r.pickup_address}</Text>
-                            <Text style={{ color: '#cbd5e1', fontSize: 13, marginTop: 3, marginBottom: 10 }}>📍 {r.drop_address}</Text>
-                            <View style={{ flexDirection: 'row', gap: 10 }}>
-                              <TouchableOpacity style={styles.skipBtn} onPress={() => setSkippedIds([...skippedIds, r.id])}>
-                                <Text style={{ color: '#fff', fontWeight: '700' }}>✕ বাদ দিন</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity style={styles.acceptBtn} onPress={() => acceptRide(r.id)}>
-                                <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 15 }}>✅ Accept Ride</Text>
-                              </TouchableOpacity>
-                            </View>
+                      <View style={styles.offerCard}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <View style={styles.farePill}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 18 }}>৳ {currentOffer.estimated_fare}</Text></View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <PaymentLogo method={currentOffer.payment_method} size={24} />
+                            <View style={styles.timerBadge}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 13 }}>{offerSec}s</Text></View>
                           </View>
-                        ))}
-                      </ScrollView>
+                        </View>
+                        <View style={styles.countTrack}><View style={[styles.countFill, { width: `${offerSec * 10}%` }]} /></View>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 6 }}>From: {currentOffer.pickup_address}</Text>
+                        <Text style={{ color: '#cbd5e1', fontSize: 13, marginTop: 2, marginBottom: 10 }}>To: {currentOffer.drop_address}</Text>
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                          <TouchableOpacity style={styles.skipBtn} onPress={() => declineRide(currentOffer.id)}>
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>{t.decline}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.acceptBtn} onPress={() => acceptRide(currentOffer.id)}>
+                            <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 15 }}>{t.acceptRide} ({offerSec}s)</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
                     )}
                   </View>
                 )}
@@ -513,17 +528,17 @@ export default function App() {
         </View>
       )}
 
-      {/* TAB 2: অন্বেষণ করুন */}
+      {/* TAB 2: EXPLORE */}
       {tab === 'EXPLORE' && (
         <ScrollView style={{ flex: 1, padding: 18, paddingTop: TOP_PAD }}>
-          <Text style={[styles.h1, { color: themeTxt }]}>অন্বেষণ করুন</Text>
+          <Text style={[styles.h1, { color: themeTxt }]}>{t.explore}</Text>
           {quests.map((q) => (
             <View key={q.id} style={styles.oppCard}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>Zoddir বোনাস (Quest)</Text>
+                <Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>Zoddir Quest</Text>
                 <Text style={{ fontSize: 18, fontWeight: '800', marginTop: 4 }}>{q.title}</Text>
-                <Text style={{ fontSize: 13, color: '#059669', fontWeight: '800', marginTop: 4 }}>বোনাস: {q.bonus_amount}৳</Text>
-                <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>সম্পন্ন: {q.completed_trips} / {q.target_trips} ট্রিপ</Text>
+                <Text style={{ fontSize: 13, color: '#059669', fontWeight: '800', marginTop: 4 }}>Bonus: ৳{q.bonus_amount}</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{q.completed_trips} / {q.target_trips} trips</Text>
               </View>
               <Ionicons name="trophy" size={40} color="#f59e0b" />
             </View>
@@ -531,88 +546,76 @@ export default function App() {
           <View style={styles.oppCard}>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 12, color: '#64748b' }}>8:00 PM - 11:00 PM</Text>
-              <Text style={{ fontSize: 18, fontWeight: '800', marginTop: 4 }}>DAC-এ সর্বোচ্চ উপার্জন</Text>
-              <Text style={{ fontSize: 12, color: '#00D2B8', marginTop: 4, fontWeight: '700' }}>হটস্পট জোন</Text>
+              <Text style={{ fontSize: 18, fontWeight: '800', marginTop: 4 }}>High Demand at DAC Airport</Text>
             </View>
-            <Ionicons name="airplane" size={42} color="#0F172A" />
+            <Ionicons name="airplane" size={40} color="#0F172A" />
           </View>
         </ScrollView>
       )}
 
-      {/* TAB 3: উপার্জন */}
+      {/* TAB 3: EARNINGS */}
       {tab === 'EARNINGS' && (
         <ScrollView style={{ flex: 1, padding: 18, paddingTop: TOP_PAD }}>
-          <Text style={[styles.h1, { color: themeTxt }]}>উপার্জন</Text>
-          <Text style={{ fontSize: 13, color: '#64748b' }}>মোট উপার্জন</Text>
+          <Text style={[styles.h1, { color: themeTxt }]}>{t.earnings}</Text>
+          <Text style={{ fontSize: 13, color: '#64748b' }}>{t.totalEarnings}</Text>
           <Text style={{ fontSize: 38, fontWeight: '900', color: '#00D2B8', marginVertical: 4 }}>{wallet.total_earned}৳</Text>
 
-          {showEarnDetail && (
-            <View style={styles.barBox}>
-              <Text style={{ fontWeight: '800', marginBottom: 8 }}>সাপ্তাহিক পরিসংখ্যান</Text>
-              <View style={styles.barChartRow}>
-                {[20, 50, 30, 75, 40, 90, 60].map((h, i) => (
-                  <View key={i} style={{ alignItems: 'center', gap: 4 }}>
-                    <View style={{ width: 22, height: h, backgroundColor: '#00D2B8', borderRadius: 6 }} />
-                    <Text style={{ fontSize: 10, color: '#64748b' }}>{['সো', 'ম', 'বু', 'বৃ', 'শু', 'শ', 'র'][i]}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
-
           <View style={styles.earnStats}>
-            <View style={styles.earnRow}><Text style={{ color: '#475569' }}>ট্রিপগুলি</Text><Text style={{ fontWeight: '800' }}>{txns.length}</Text></View>
-            <View style={styles.earnRow}><Text style={{ color: '#475569' }}>মোট উত্তোলন</Text><Text style={{ fontWeight: '800' }}>{wallet.total_withdrawn}৳</Text></View>
+            <View style={styles.earnRow}><Text style={{ color: '#475569' }}>{t.trips}</Text><Text style={{ fontWeight: '800' }}>{txns.length}</Text></View>
+            <View style={styles.earnRow}><Text style={{ color: '#475569' }}>{t.totalWithdrawn}</Text><Text style={{ fontWeight: '800' }}>{wallet.total_withdrawn}৳</Text></View>
           </View>
 
-          <TouchableOpacity style={styles.grayPill} onPress={() => setShowEarnDetail(!showEarnDetail)}>
-            <Text style={{ fontWeight: '800' }}>{showEarnDetail ? 'বিবরণ লুকান' : 'বিবরণ দেখুন'}</Text>
+          <TouchableOpacity style={styles.grayPill} onPress={() => setMenuScreen('EARNINGS_DETAIL')}>
+            <Ionicons name="bar-chart" size={16} color="#0F172A" /><Text style={{ fontWeight: '800' }}>{t.viewDetails}</Text>
           </TouchableOpacity>
 
           <View style={styles.walletDarkCard}>
-            <Text style={{ color: '#00D2B8', fontSize: 13, fontWeight: '700' }}>ওয়ালেট ব্যালেন্স</Text>
-            <Text style={{ fontSize: 34, fontWeight: '900', color: '#A3E635', marginVertical: 4 }}>{wallet.balance}৳</Text>
-            <TouchableOpacity style={[styles.grayPill, { backgroundColor: '#00D2B8' }]} onPress={() => setMenuScreen('WALLET')}>
-              <Ionicons name="flash" size={16} color="#0F172A" /><Text style={{ fontWeight: '900', color: '#0F172A' }}>বিকাশ / নগদে ক্যাশ আউট</Text>
+            <Text style={{ color: '#00D2B8', fontSize: 13, fontWeight: '700' }}>{t.walletBal}</Text>
+            <Text style={{ fontSize: 34, fontWeight: '900', color: Number(wallet.balance) < 0 ? '#fb7185' : '#A3E635', marginVertical: 4 }}>{wallet.balance}৳</Text>
+            <TouchableOpacity style={[styles.grayPill, { backgroundColor: Number(wallet.balance) < 0 ? '#e11d48' : '#00D2B8' }]} onPress={() => setMenuScreen(Number(wallet.balance) < 0 ? 'PAY_DUE' : 'WALLET')}>
+              <Ionicons name="flash" size={16} color={Number(wallet.balance) < 0 ? '#fff' : '#0F172A'} />
+              <Text style={{ fontWeight: '900', color: Number(wallet.balance) < 0 ? '#fff' : '#0F172A' }}>
+                {Number(wallet.balance) < 0 ? t.payDueNow : t.cashOut}
+              </Text>
             </TouchableOpacity>
           </View>
 
           <TouchableOpacity style={styles.menuListRow} onPress={() => setMenuScreen('REFER')}>
             <Ionicons name="gift-outline" size={22} color="#0F172A" />
-            <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 15 }}>বন্ধুদের রেফার করুন (500৳)</Text><Text style={{ fontSize: 12, color: '#64748b' }}>প্রতিটি সফল রেফারে বোনাস পান</Text></View>
+            <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 15 }}>{t.referEarn}</Text></View>
             <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
           </TouchableOpacity>
         </ScrollView>
       )}
 
-      {/* TAB 4: ইনবক্স */}
+      {/* TAB 4: INBOX */}
       {tab === 'INBOX' && (
         <ScrollView style={{ flex: 1, padding: 18, paddingTop: TOP_PAD }}>
-          <Text style={[styles.h1, { color: themeTxt }]}>ইনবক্স</Text>
+          <Text style={[styles.h1, { color: themeTxt }]}>{t.inbox}</Text>
           <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderColor: '#e2e8f0', marginBottom: 14 }}>
-            <TouchableOpacity onPress={() => setInboxTab('NOTIF')} style={[styles.inbTab, inboxTab === 'NOTIF' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}><Text style={{ fontWeight: '800' }}>বিজ্ঞপ্তি</Text></TouchableOpacity>
-            <TouchableOpacity onPress={() => setInboxTab('HELP')} style={[styles.inbTab, inboxTab === 'HELP' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}><Text style={{ fontWeight: '800', color: '#64748b' }}>সহায়তা</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setInboxTab('NOTIF')} style={[styles.inbTab, inboxTab === 'NOTIF' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}><Text style={{ fontWeight: '800' }}>{t.notifications}</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setInboxTab('HELP')} style={[styles.inbTab, inboxTab === 'HELP' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}><Text style={{ fontWeight: '800', color: '#64748b' }}>{t.support}</Text></TouchableOpacity>
           </View>
           {inboxTab === 'NOTIF' ? (
             <View>
               <TouchableOpacity style={styles.inboxRow} onPress={() => setMenuScreen('DOCUMENTS')}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 15 }}>{isVerified ? 'অ্যাকাউন্ট অনুমোদিত ✅' : 'ডকুমেন্ট ভেরিফিকেশন পেন্ডিং'}</Text>
-                  <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{isVerified ? 'আপনি Zoddir-এ রাইড নিতে পারবেন' : 'ডকুমেন্ট আপলোড করে অনুমোদন নিন'}</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 15 }}>{isVerified ? 'Account Verified' : t.docsPending}</Text>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{isVerified ? 'Ready for Zoddir rides' : t.uploadDocsHint}</Text>
                 </View>
-                <View style={styles.tealDot} />
+                <Ionicons name={isVerified ? 'checkmark-circle' : 'alert-circle'} size={22} color={isVerified ? '#00D2B8' : '#f59e0b'} />
               </TouchableOpacity>
-              {txns.slice(0, 6).map((t) => (
-                <View key={t.id} style={styles.inboxRow}>
-                  <View style={{ flex: 1 }}><Text style={{ fontWeight: '700', fontSize: 14 }}>{t.description}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{t.amount}৳ • ব্যালেন্স: {t.balance_after}৳</Text></View>
+              {txns.slice(0, 6).map((tx) => (
+                <View key={tx.id} style={styles.inboxRow}>
+                  <View style={{ flex: 1 }}><Text style={{ fontWeight: '700', fontSize: 14 }}>{tx.description}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{tx.amount}৳ • Bal: {tx.balance_after}৳</Text></View>
                 </View>
               ))}
             </View>
-          ) : <Text style={{ color: '#475569' }}>Zoddir ড্রাইভার সাপোর্ট: 01700000000</Text>}
+          ) : <Text style={{ color: '#475569' }}>Zoddir Support: 01700000000</Text>}
         </ScrollView>
       )}
 
-      {/* TAB 5: মেনু */}
+      {/* TAB 5: MENU */}
       {tab === 'MENU' && (
         <ScrollView style={{ flex: 1, padding: 20, paddingTop: TOP_PAD }}>
           <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 24 }} onPress={() => setMenuScreen('PROFILE')}>
@@ -620,17 +623,15 @@ export default function App() {
               : <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }}><Ionicons name="person" size={28} color="#00D2B8" /></View>}
             <View>
               <Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{user.name}</Text>
-              <Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>প্রোফাইল ও ছবি এডিট →</Text>
+              <Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>View Profile & Photo →</Text>
             </View>
           </TouchableOpacity>
-
           {[
-            { lbl: 'রেফারালসমূহ', fn: () => setMenuScreen('REFER') },
-            { lbl: 'অন্বেষণ করুন', fn: () => setTab('EXPLORE') },
-            { lbl: 'ওয়ালেট', fn: () => setMenuScreen('WALLET') },
-            { lbl: 'অ্যাকাউন্ট ও ডকুমেন্টস', fn: () => setMenuScreen('ACCOUNT') },
-            { lbl: 'সহায়তা', fn: () => setTab('INBOX') },
-            { lbl: 'পরামর্শ এবং তথ্য', fn: () => Alert.alert('Zoddir Driver', 'ভার্সন 2.0 • ঢাকা, বাংলাদেশ') }
+            { lbl: t.referEarn, fn: () => setMenuScreen('REFER') },
+            { lbl: t.opportunities, fn: () => setTab('EXPLORE') },
+            { lbl: 'Wallet & Payouts', fn: () => setMenuScreen('WALLET') },
+            { lbl: t.account, fn: () => setMenuScreen('ACCOUNT') },
+            { lbl: t.settings, fn: () => setMenuScreen('SETTINGS') }
           ].map((m) => (
             <TouchableOpacity key={m.lbl} style={{ paddingVertical: 15 }} onPress={m.fn}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{m.lbl}</Text>
@@ -642,11 +643,11 @@ export default function App() {
       {/* 5-TAB NAV BAR */}
       <View style={[styles.navBar, { backgroundColor: '#0F172A' }]}>
         {[
-          { k: 'HOME', lbl: 'হোম', icon: 'home' },
-          { k: 'EXPLORE', lbl: 'অন্বেষণ', icon: 'compass', fn: loadQuests },
-          { k: 'EARNINGS', lbl: 'উপার্জন', icon: 'cash', fn: loadWallet },
-          { k: 'INBOX', lbl: 'ইনবক্স', icon: 'mail', badge: !isVerified ? 1 : txns.length },
-          { k: 'MENU', lbl: 'মেনু', icon: 'menu' }
+          { k: 'HOME', lbl: t.home, icon: 'home' },
+          { k: 'EXPLORE', lbl: t.explore, icon: 'compass', fn: loadQuests },
+          { k: 'EARNINGS', lbl: t.earnings, icon: 'cash', fn: loadWallet },
+          { k: 'INBOX', lbl: t.inbox, icon: 'mail', badge: !isVerified ? 1 : txns.length },
+          { k: 'MENU', lbl: t.menu, icon: 'menu' }
         ].map((item) => {
           const active = tab === item.k;
           return (
@@ -661,23 +662,22 @@ export default function App() {
         })}
       </View>
 
-      {/* PRO TRIP RECEIPT MODAL */}
+      {/* TRIP RECEIPT MODAL */}
       <Modal visible={!!tripReceipt} transparent animationType="fade">
         <View style={styles.modalBg}>
           <View style={styles.receiptCard}>
             <View style={{ alignItems: 'center', marginBottom: 12 }}>
               <View style={styles.receiptBadge}><Ionicons name="checkmark-done" size={32} color="#0F172A" /></View>
-              <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A', marginTop: 8 }}>ট্রিপ সম্পন্ন হয়েছে!</Text>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A', marginTop: 8 }}>{t.tripDone}</Text>
               <Text style={{ fontSize: 32, fontWeight: '900', color: '#00D2B8', marginTop: 4 }}>+৳{tripReceipt?.driver_earning}</Text>
-              <Text style={{ fontSize: 12, color: '#64748b' }}>আপনার নিট আয় ({tripReceipt?.payment_method})</Text>
+              <Text style={{ fontSize: 12, color: '#64748b' }}>{t.netEarning} ({tripReceipt?.payment_method})</Text>
             </View>
-            <View style={styles.receiptRow}><Text>অতিক্রান্ত দূরত্ব</Text><Text style={{ fontWeight: '800' }}>{tripReceipt?.actual_distance_km} কিমি</Text></View>
-            <View style={styles.receiptRow}><Text>মোট সময়</Text><Text style={{ fontWeight: '800' }}>{tripReceipt?.actual_duration_min} মিনিট</Text></View>
-            <View style={styles.receiptRow}><Text>মোট ভাড়া</Text><Text style={{ fontWeight: '800' }}>৳{tripReceipt?.final_fare}</Text></View>
-            <View style={styles.receiptRow}><Text>Zoddir কমিশন</Text><Text style={{ fontWeight: '800', color: '#e11d48' }}>-৳{tripReceipt?.platform_commission}</Text></View>
-            <View style={styles.receiptRow}><Text>নতুন ওয়ালেট ব্যালেন্স</Text><Text style={{ fontWeight: '900', color: '#059669' }}>৳{tripReceipt?.new_balance}</Text></View>
+            <View style={styles.receiptRow}><Text>Distance</Text><Text style={{ fontWeight: '800' }}>{tripReceipt?.actual_distance_km} km</Text></View>
+            <View style={styles.receiptRow}><Text>Duration</Text><Text style={{ fontWeight: '800' }}>{tripReceipt?.actual_duration_min} min</Text></View>
+            <View style={styles.receiptRow}><Text>Total Fare</Text><Text style={{ fontWeight: '800' }}>৳{tripReceipt?.final_fare}</Text></View>
+            <View style={styles.receiptRow}><Text>Commission</Text><Text style={{ fontWeight: '800', color: '#e11d48' }}>-৳{tripReceipt?.platform_commission}</Text></View>
             <TouchableOpacity style={[styles.navyBtn, { marginTop: 14 }]} onPress={() => setTripReceipt(null)}>
-              <Text style={styles.navyBtnTxt}>ঠিক আছে</Text>
+              <Text style={styles.navyBtnTxt}>{t.ok}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -687,7 +687,7 @@ export default function App() {
         screen={menuScreen} setScreen={setMenuScreen} onClose={() => setMenuScreen(null)}
         user={user} token={token} API={API} onRefreshUser={refreshProfile}
         onLogout={() => { setUser(null); setToken(''); }}
-        wallet={wallet} txns={txns} withdraws={withdraws} onReloadWallet={loadWallet}
+        wallet={wallet} txns={txns} withdraws={withdraws} duePayments={duePayments} onReloadWallet={loadWallet}
         lang={lang} setLang={setLang} nightMode={nightMode} setNightMode={setNightMode}
       />
     </View>
@@ -708,7 +708,8 @@ const styles = StyleSheet.create({
   grayPill: { flexDirection: 'row', gap: 6, backgroundColor: '#f1f5f9', paddingVertical: 13, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
 
   mapFloating: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
-  earnBadge: { backgroundColor: '#0F172A', paddingHorizontal: 18, paddingVertical: 8, borderRadius: 22, borderWidth: 1.5, borderColor: '#00D2B8', elevation: 6 },
+  earnBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#0F172A', paddingHorizontal: 18, paddingVertical: 8, borderRadius: 22, borderWidth: 1.5, borderColor: '#00D2B8', elevation: 6 },
+  dueDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fb7185' },
   homeSheet: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 18, borderTopLeftRadius: 26, borderTopRightRadius: 26, elevation: 20 },
   barChartRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 60, paddingHorizontal: 6 },
   barStick: { width: 22, borderRadius: 4 },
@@ -723,6 +724,9 @@ const styles = StyleSheet.create({
 
   offerCard: { backgroundColor: '#0F172A', padding: 16, borderRadius: 18, borderWidth: 2, borderColor: '#00D2B8', marginBottom: 8 },
   farePill: { backgroundColor: '#A3E635', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 10 },
+  timerBadge: { backgroundColor: '#00D2B8', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
+  countTrack: { height: 4, backgroundColor: '#1e293b', borderRadius: 4, overflow: 'hidden' },
+  countFill: { height: 4, backgroundColor: '#A3E635' },
   skipBtn: { flex: 1, backgroundColor: '#1e293b', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   acceptBtn: { flex: 2, backgroundColor: '#00D2B8', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
 
@@ -733,7 +737,6 @@ const styles = StyleSheet.create({
 
   h1: { fontSize: 30, fontWeight: '800', marginBottom: 10 },
   oppCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 18, borderRadius: 18, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12 },
-  barBox: { backgroundColor: '#f8fafc', padding: 16, borderRadius: 16, marginVertical: 10 },
   earnStats: { marginTop: 10, borderTopWidth: 1, borderColor: '#f1f5f9' },
   earnRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   walletDarkCard: { backgroundColor: '#0F172A', padding: 18, borderRadius: 18, marginVertical: 16, borderWidth: 1, borderColor: '#00D2B8' },

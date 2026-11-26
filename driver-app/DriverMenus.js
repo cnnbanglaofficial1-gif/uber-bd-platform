@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet, Text, View, Modal, TouchableOpacity, TextInput,
-  ScrollView, Image, Alert, ActivityIndicator, Share
+  ScrollView, Image, Alert, ActivityIndicator, Share, Linking
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
+import { PaymentLogo } from './BrandIcons';
+import { STRINGS } from './i18n';
 
 const BRANDS = ['Toyota', 'Honda', 'Suzuki', 'Yamaha', 'Bajaj', 'TVS', 'Hero', 'Hyundai'];
 const YEARS = ['2026', '2025', '2024', '2023', '2022', '2020', '2018', '2015', '2010', '2005'];
 
 export default function DriverMenus({
   screen, setScreen, onClose, user, token, API, onRefreshUser, onLogout,
-  wallet, txns, withdraws, onReloadWallet, lang, setLang, nightMode, setNightMode
+  wallet, txns, withdraws, duePayments = [], onReloadWallet, lang, setLang, nightMode, setNightMode
 }) {
+  const t = STRINGS[lang || 'en'];
   const dp = user?.driverProfile || {};
   const [loading, setLoading] = useState(false);
 
@@ -34,11 +37,21 @@ export default function DriverMenus({
   const [pBkash, setPBkash] = useState(user?.bkash_number || '');
   const [pNagad, setPNagad] = useState(user?.nagad_number || '');
   const [pAvatar, setPAvatar] = useState(user?.avatar_url || null);
-  const [accTab, setAccTab] = useState('হোম');
+  const [accTab, setAccTab] = useState('Home');
 
+  // Withdraw & Due Payment
   const [wAmount, setWAmount] = useState('');
   const [wMethod, setWMethod] = useState('BKASH');
   const [wNumber, setWNumber] = useState('');
+  const [dueMethod, setDueMethod] = useState('BKASH');
+  const [dueAmount, setDueAmount] = useState('');
+  const [dueTrx, setDueTrx] = useState('');
+  const [pubSettings, setPubSettings] = useState({});
+
+  // 30-Day Earnings & Trips Detail
+  const [earnSubTab, setEarnSubTab] = useState('DAILY'); // 'DAILY' | 'TRIPS'
+  const [dailyList, setDailyList] = useState([]);
+  const [tripList, setTripList] = useState([]);
 
   useEffect(() => {
     if (user) {
@@ -53,7 +66,16 @@ export default function DriverMenus({
       setNidPhoto(dp.nid_photo || null); setLicensePhoto(dp.license_photo || null);
       setVehiclePhoto(dp.vehicle_paper_photo || null);
     }
-  }, [user, screen]);
+    if (Number(wallet?.balance) < 0) setDueAmount(String(Math.abs(Number(wallet.balance)).toFixed(2)));
+    if (screen === 'WALLET' || screen === 'PAY_DUE') {
+      axios.get(`${API}/api/settings/public`).then((r) => setPubSettings(r.data || {})).catch(() => {});
+    }
+    if (screen === 'EARNINGS_DETAIL' && token) {
+      axios.get(`${API}/api/driver/earnings-detail`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => { setDailyList(r.data.daily || []); setTripList(r.data.trips || []); })
+        .catch(() => {});
+    }
+  }, [user, screen, wallet?.balance]);
 
   const saveAll = async (extra = {}) => {
     setLoading(true);
@@ -68,10 +90,8 @@ export default function DriverMenus({
         vehicle_paper_photo: extra.vehicle_paper_photo || vehiclePhoto
       }, { headers: { Authorization: `Bearer ${token}` } });
       await onRefreshUser();
-      Alert.alert('সফল ✅', 'তথ্য সংরক্ষণ করা হয়েছে!');
-    } catch (err) {
-      Alert.alert('ব্যর্থ', err.response?.data?.error || 'সংরক্ষণ হয়নি');
-    }
+      Alert.alert('Saved', lang === 'bn' ? 'তথ্য সংরক্ষণ হয়েছে!' : 'Profile updated!');
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
   };
 
@@ -79,39 +99,42 @@ export default function DriverMenus({
     try {
       if (useCamera) {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) return Alert.alert('অনুমতি দিন', 'ক্যামেরা ব্যবহারের অনুমতি দিন');
+        if (!perm.granted) return Alert.alert('Permission', 'Allow camera access');
       }
       const fn = useCamera ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
       const res = await fn({ mediaTypes: ['images'], allowsEditing: true, quality: 0.25, base64: true });
       if (!res.canceled && res.assets[0]?.base64) {
         const b64 = `data:image/jpeg;base64,${res.assets[0].base64}`;
-        if (docTarget === 'AVATAR') {
-          setPAvatar(b64);
-          await saveAll({ avatar_url: b64 });
-          setScreen('PROFILE');
-        } else {
+        if (docTarget === 'AVATAR') { setPAvatar(b64); await saveAll({ avatar_url: b64 }); setScreen('PROFILE'); }
+        else {
           if (docTarget === 'NID') { setNidPhoto(b64); await saveAll({ nid_photo: b64 }); }
           else if (docTarget === 'LICENSE') { setLicensePhoto(b64); await saveAll({ license_photo: b64 }); }
           else { setVehiclePhoto(b64); await saveAll({ vehicle_paper_photo: b64 }); }
           setScreen('DOCUMENTS');
         }
       }
-    } catch { Alert.alert('Error', 'ছবি নেওয়া যায়নি'); }
+    } catch { Alert.alert('Error', 'Could not capture image'); }
   };
 
   const submitWithdraw = async () => {
-    if (!wAmount || !wNumber) return Alert.alert('তথ্য দিন', 'টাকার পরিমাণ ও নম্বর দিন');
+    if (!wAmount || !wNumber) return Alert.alert('Required', 'Enter amount & number');
     setLoading(true);
     try {
-      await axios.post(`${API}/api/driver/withdraw`, {
-        amount: Number(wAmount), method: wMethod, account_number: wNumber
-      }, { headers: { Authorization: `Bearer ${token}` } });
-      Alert.alert('সফল 🎉', `${wMethod}-এ ৳${wAmount} উত্তোলনের রিকোয়েস্ট সম্পন্ন হয়েছে!`);
-      setWAmount('');
-      onReloadWallet();
-    } catch (err) {
-      Alert.alert('ব্যর্থ', err.response?.data?.error || 'উইথড্র হয়নি');
-    }
+      await axios.post(`${API}/api/driver/withdraw`, { amount: Number(wAmount), method: wMethod, account_number: wNumber }, { headers: { Authorization: `Bearer ${token}` } });
+      Alert.alert('Success', `Withdraw request for ৳${wAmount} submitted!`);
+      setWAmount(''); onReloadWallet();
+    } catch (err) { Alert.alert('Failed', err.response?.data?.error || 'Withdraw failed'); }
+    setLoading(false);
+  };
+
+  const submitDuePay = async () => {
+    if (!dueAmount || !dueTrx) return Alert.alert('Required', 'Enter amount and Transaction ID (TrxID)');
+    setLoading(true);
+    try {
+      await axios.post(`${API}/api/driver/pay-due`, { amount: Number(dueAmount), method: dueMethod, trx_id: dueTrx }, { headers: { Authorization: `Bearer ${token}` } });
+      Alert.alert('Submitted', 'আপনার পেমেন্ট জমা হয়েছে! অ্যাডমিন যাচাই করে মাইনাস ব্যালেন্স ক্লিয়ার করবেন।');
+      setDueTrx(''); onReloadWallet(); setScreen('WALLET');
+    } catch (err) { Alert.alert('Failed', err.response?.data?.error || 'Error'); }
     setLoading(false);
   };
 
@@ -121,63 +144,58 @@ export default function DriverMenus({
     <Modal visible={!!screen} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.container, nightMode && { backgroundColor: '#0F172A' }]}>
 
+        {/* ১. ACCOUNT MENU */}
         {screen === 'ACCOUNT' && (
           <ScrollView style={{ flex: 1 }}>
             <View style={styles.header}>
               <TouchableOpacity onPress={onClose}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-              <Text style={styles.bigHeaderTxt}>Zoddir অ্যাকাউন্ট</Text>
+              <Text style={styles.bigHeaderTxt}>{t.account}</Text>
             </View>
-
-            <TouchableOpacity style={styles.menuRow} onPress={() => setScreen('VEHICLES')}>
-              <View style={styles.menuIconBox}><MaterialCommunityIcons name="car-cog" size={22} color="#00D2B8" /></View>
-              <View style={{ flex: 1 }}><Text style={styles.menuTxt}>গাড়িগুলি</Text><Text style={styles.menuSub}>{dp.vehicle_model || dp.vehicle_type} • {dp.plate_number || 'নম্বর দিন'}</Text></View>
-              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
-            </TouchableOpacity>
-
             {[
-              { lbl: 'ডকুমেন্টস ও ভেরিফিকেশন', icon: 'file-document-check', to: 'DOCUMENTS' },
-              { lbl: 'পেমেন্ট (বিকাশ / নগদ)', icon: 'wallet', to: 'WALLET' },
-              { lbl: 'Zoddir অ্যাকাউন্ট পরিচালনা করুন', icon: 'account-cog', to: 'MANAGE_ACCOUNT' },
-              { lbl: 'পাবলিক প্রোফাইল দেখুন', icon: 'card-account-details', to: 'PUBLIC_PROFILE' },
-              { lbl: 'অ্যাপ সেটিংস', icon: 'cog', to: 'SETTINGS' }
+              { lbl: t.vehicles, sub: `${dp.vehicle_model || dp.vehicle_type} • ${dp.plate_number || ''}`, icon: 'car-cog', to: 'VEHICLES' },
+              { lbl: t.documents, icon: 'file-document-check', to: 'DOCUMENTS' },
+              { lbl: 'Wallet & Payouts', icon: 'wallet', to: 'WALLET' },
+              { lbl: 'Manage Zoddir Account', icon: 'account-cog', to: 'MANAGE_ACCOUNT' },
+              { lbl: 'Public Profile', icon: 'card-account-details', to: 'PUBLIC_PROFILE' },
+              { lbl: t.settings, icon: 'cog', to: 'SETTINGS' }
             ].map((item) => (
               <TouchableOpacity key={item.lbl} style={styles.menuRow} onPress={() => setScreen(item.to)}>
                 <View style={styles.menuIconBox}><MaterialCommunityIcons name={item.icon} size={22} color="#00D2B8" /></View>
-                <Text style={[styles.menuTxt, { flex: 1 }]}>{item.lbl}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.menuTxt}>{item.lbl}</Text>
+                  {item.sub && <Text style={styles.menuSub}>{item.sub}</Text>}
+                </View>
                 <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
               </TouchableOpacity>
             ))}
-
             <TouchableOpacity style={{ padding: 20 }} onPress={() => { onClose(); onLogout(); }}>
-              <Text style={{ color: '#e11d48', fontSize: 17, fontWeight: '800' }}>সাইন আউট</Text>
+              <Text style={{ color: '#e11d48', fontSize: 17, fontWeight: '800' }}>{t.signOut}</Text>
             </TouchableOpacity>
           </ScrollView>
         )}
 
+        {/* ২. VEHICLES & ADD VEHICLE */}
         {screen === 'VEHICLES' && (
           <View style={{ flex: 1 }}>
             <View style={styles.topNav}>
               <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-              <Text style={styles.navTitle}>গাড়িগুলি</Text>
+              <Text style={styles.navTitle}>{t.vehicles}</Text>
               <TouchableOpacity style={styles.addVehBtn} onPress={() => setScreen('ADD_VEHICLE')}>
-                <Ionicons name="add" size={16} color="#0F172A" /><Text style={{ color: '#0F172A', fontWeight: '800', fontSize: 12 }}>যোগ করুন</Text>
+                <Ionicons name="add" size={16} color="#0F172A" /><Text style={{ color: '#0F172A', fontWeight: '800', fontSize: 12 }}>Add/Edit</Text>
               </TouchableOpacity>
             </View>
             <ScrollView style={{ padding: 20 }}>
-              <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                <MaterialCommunityIcons name={dp.vehicle_type === 'BIKE' ? 'motorbike' : 'car-sports'} size={54} color="#00D2B8" />
-                <Text style={{ fontSize: 22, fontWeight: '800', textAlign: 'center', marginTop: 10, color: '#0F172A' }}>আপনার গাড়ির সেটআপ</Text>
-                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginTop: 4 }}>সমস্ত ডকুমেন্ট অনুমোদিত হয়ে গেলে আপনি উপার্জন শুরু করতে পারেন।</Text>
-              </View>
-
               <TouchableOpacity style={styles.vehCard} onPress={() => setScreen('DOCUMENTS')}>
                 <MaterialCommunityIcons name={dp.vehicle_type === 'BIKE' ? 'motorbike' : 'car-side'} size={36} color="#0F172A" />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{dp.vehicle_model || dp.vehicle_type}</Text>
-                  <Text style={{ fontSize: 13, color: '#64748b' }}>{dp.plate_number || 'প্লেট নম্বর নেই'}</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: dp.is_approved ? '#059669' : '#d97706', marginTop: 2 }}>
-                    {dp.is_approved ? '✅ অনুমোদিত' : '⏳ ডকুমেন্ট প্রয়োজন / পেন্ডিং'}
-                  </Text>
+                  <Text style={{ fontSize: 13, color: '#64748b' }}>{dp.plate_number || 'No Plate'}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                    <Ionicons name={dp.is_approved ? 'checkmark-circle' : 'time'} size={15} color={dp.is_approved ? '#059669' : '#d97706'} />
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: dp.is_approved ? '#059669' : '#d97706' }}>
+                      {dp.is_approved ? 'Approved' : 'Pending Approval'} {dp.allow_premium ? '• Premium Active' : ''}
+                    </Text>
+                  </View>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#475569" />
               </TouchableOpacity>
@@ -188,18 +206,15 @@ export default function DriverMenus({
         {screen === 'ADD_VEHICLE' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('VEHICLES')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14, marginBottom: 6, color: '#0F172A' }}>আপনার গাড়ির তথ্য লিখুন</Text>
-            <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>গাড়ির ধরন (Bike / CNG / Car) ও বিস্তারিত দিন</Text>
-
+            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14, marginBottom: 12 }}>Vehicle Information</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-              {['BIKE', 'CNG', 'CAR'].map((t) => (
-                <TouchableOpacity key={t} onPress={() => setVType(t)} style={[styles.chip, vType === t && { backgroundColor: '#0F172A' }]}>
-                  <Text style={{ color: vType === t ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>{t}</Text>
+              {['BIKE', 'CNG', 'CAR'].map((vt) => (
+                <TouchableOpacity key={vt} onPress={() => setVType(vt)} style={[styles.chip, vType === vt && { backgroundColor: '#0F172A' }]}>
+                  <Text style={{ color: vType === vt ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>{vt}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-
-            <Text style={styles.lbl}>প্রস্তুতকারক *</Text>
+            <Text style={styles.lbl}>Brand</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
               {BRANDS.map((b) => (
                 <TouchableOpacity key={b} onPress={() => setVMake(b)} style={[styles.miniPill, vMake === b && { backgroundColor: '#0F172A' }]}>
@@ -207,10 +222,9 @@ export default function DriverMenus({
                 </TouchableOpacity>
               ))}
             </ScrollView>
-            <TextInput style={styles.input} value={vMake} onChangeText={setVMake} placeholder="Toyota / Yamaha" />
-            <Text style={styles.lbl}>মডেল *</Text><TextInput style={styles.input} value={vModel} onChangeText={setVModel} placeholder="Corolla Axio / FZ-S" />
-
-            <Text style={styles.lbl}>বছর *</Text>
+            <TextInput style={styles.input} value={vMake} onChangeText={setVMake} />
+            <Text style={styles.lbl}>Model</Text><TextInput style={styles.input} value={vModel} onChangeText={setVModel} placeholder="Corolla / FZ-S" />
+            <Text style={styles.lbl}>Year (2010+ eligible for Zoddir Premium)</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
               {YEARS.map((y) => (
                 <TouchableOpacity key={y} onPress={() => setVYear(y)} style={[styles.miniPill, vYear === y && { backgroundColor: '#0F172A' }]}>
@@ -218,35 +232,32 @@ export default function DriverMenus({
                 </TouchableOpacity>
               ))}
             </ScrollView>
-
-            <Text style={styles.lbl}>License plate number *</Text><TextInput style={styles.input} value={vPlate} onChangeText={setVPlate} placeholder="DHM-GA-28-9287" />
-            <Text style={styles.lbl}>ড্রাইভিং লাইসেন্স নম্বর</Text><TextInput style={styles.input} value={vLicense} onChangeText={setVLicense} placeholder="DK0123456" />
-
+            <Text style={styles.lbl}>Plate Number</Text><TextInput style={styles.input} value={vPlate} onChangeText={setVPlate} placeholder="DHM-GA-..." />
+            <Text style={styles.lbl}>Driving License No</Text><TextInput style={styles.input} value={vLicense} onChangeText={setVLicense} />
             <TouchableOpacity style={styles.navyBtn} onPress={async () => { await saveAll({ vehicle_model: `${vMake} ${vModel} (${vYear})` }); setScreen('DOCUMENTS'); }} disabled={loading}>
-              {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>চালিয়ে যান</Text>}
+              <Text style={styles.navyBtnTxt}>Save & Continue</Text>
             </TouchableOpacity>
           </ScrollView>
         )}
 
+        {/* ৩. DOCUMENTS & CAPTURE */}
         {screen === 'DOCUMENTS' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 28, fontWeight: '800', marginTop: 14, color: '#0F172A' }}>{dp.vehicle_model || dp.vehicle_type}</Text>
-            <Text style={{ fontSize: 14, color: '#475569', marginTop: 4, marginBottom: 20 }}>এই গাড়ির জন্য নিম্নোক্ত নথি প্রদান করুন।</Text>
-
+            <Text style={{ fontSize: 26, fontWeight: '800', marginTop: 14, marginBottom: 16 }}>{t.documents}</Text>
             {[
-              { k: 'NID', title: 'জাতীয় পরিচয়পত্র (NID / ফিটনেস)', done: !!nidPhoto },
-              { k: 'LICENSE', title: 'ড্রাইভিং লাইসেন্স (বা কর টোকেন)', done: !!licensePhoto },
-              { k: 'VEHICLE', title: 'যানবাহন নিবন্ধন (গাড়ির কাগজ)', done: !!vehiclePhoto }
+              { k: 'NID', title: 'National ID (NID)', done: !!nidPhoto },
+              { k: 'LICENSE', title: 'Driving License / Tax Token', done: !!licensePhoto },
+              { k: 'VEHICLE', title: 'Vehicle Registration Paper', done: !!vehiclePhoto }
             ].map((d) => (
               <TouchableOpacity key={d.k} style={styles.docRow} onPress={() => { setDocTarget(d.k); setScreen('DOC_CAPTURE'); }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A' }}>{d.title}</Text>
-                  <Text style={{ fontSize: 13, color: d.done ? '#059669' : '#00D2B8', fontWeight: '700', marginTop: 2 }}>
-                    {d.done ? '✅ সম্পন্ন হয়েছে (আপলোডেড)' : 'প্রস্তাবিত পরবর্তী পদক্ষেপ'}
+                  <Text style={{ fontSize: 12, color: d.done ? '#059669' : '#00D2B8', fontWeight: '700', marginTop: 2 }}>
+                    {d.done ? 'Uploaded' : 'Tap to upload'}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+                <Ionicons name={d.done ? 'checkmark-circle' : 'cloud-upload-outline'} size={22} color={d.done ? '#059669' : '#00D2B8'} />
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -255,155 +266,212 @@ export default function DriverMenus({
         {screen === 'DOC_CAPTURE' && (
           <View style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen(docTarget === 'AVATAR' ? 'PROFILE' : 'DOCUMENTS')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14, color: '#0F172A' }}>
-              {docTarget === 'NID' ? 'NID / ফিটনেস' : docTarget === 'LICENSE' ? 'ড্রাইভিং লাইসেন্স' : docTarget === 'AVATAR' ? 'প্রোফাইল ছবি' : 'যানবাহন নিবন্ধন'}-এর ছবি দিন
-            </Text>
-            <Text style={{ color: '#64748b', marginTop: 6 }}>ছবিটি যেন স্পষ্ট দেখা যায় তা নিশ্চিত করুন।</Text>
-
+            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14 }}>Upload {docTarget}</Text>
             <View style={styles.docPreviewBox}>
               {(docTarget === 'NID' ? nidPhoto : docTarget === 'LICENSE' ? licensePhoto : docTarget === 'AVATAR' ? pAvatar : vehiclePhoto) ? (
                 <Image source={{ uri: docTarget === 'NID' ? nidPhoto : docTarget === 'LICENSE' ? licensePhoto : docTarget === 'AVATAR' ? pAvatar : vehiclePhoto }} style={{ width: '100%', height: 220, borderRadius: 12 }} resizeMode="contain" />
-              ) : (
-                <Ionicons name="camera-outline" size={84} color="#94a3b8" />
-              )}
+              ) : <Ionicons name="camera-outline" size={84} color="#94a3b8" />}
             </View>
-
-            <TouchableOpacity style={styles.grayBtn} onPress={() => captureDoc(false)} disabled={loading}>
-              <Text style={{ fontWeight: '800', fontSize: 15, color: '#0F172A' }}>গ্যালারি থেকে আপলোড করুন</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.navyBtn} onPress={() => captureDoc(true)} disabled={loading}>
-              {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>ক্যামেরা দিয়ে ফটো তুলুন</Text>}
-            </TouchableOpacity>
+            <TouchableOpacity style={styles.grayBtn} onPress={() => captureDoc(false)}><Text style={{ fontWeight: '800' }}>Choose from Gallery</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.navyBtn} onPress={() => captureDoc(true)}><Text style={styles.navyBtnTxt}>Take Photo (Camera)</Text></TouchableOpacity>
           </View>
         )}
 
+        {/* ৪. WALLET + PAY DUE + WITHDRAW */}
         {screen === 'WALLET' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 16 }}>
               <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color="#0F172A" /></TouchableOpacity>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: '#0F172A' }}>Zoddir Wallet ও ক্যাশ আউট</Text>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: '#0F172A' }}>Zoddir Wallet</Text>
             </View>
 
             <View style={styles.walletBox}>
-              <Text style={{ color: '#00D2B8', fontSize: 13, fontWeight: '700' }}>বর্তমান ব্যালেন্স</Text>
-              <Text style={{ fontSize: 34, fontWeight: '900', color: '#A3E635', marginVertical: 4 }}>{wallet.balance}৳</Text>
-              <Text style={{ fontSize: 12, color: '#cbd5e1' }}>মোট আয়: {wallet.total_earned}৳ • উত্তোলন: {wallet.total_withdrawn}৳</Text>
+              <Text style={{ color: '#00D2B8', fontSize: 13, fontWeight: '700' }}>{t.walletBal}</Text>
+              <Text style={{ fontSize: 34, fontWeight: '900', color: Number(wallet.balance) < 0 ? '#fb7185' : '#A3E635', marginVertical: 4 }}>{wallet.balance}৳</Text>
+              <Text style={{ fontSize: 12, color: '#cbd5e1' }}>{t.totalEarnings}: {wallet.total_earned}৳ • {t.totalWithdrawn}: {wallet.total_withdrawn}৳</Text>
             </View>
 
-            <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8, color: '#0F172A' }}>⚡ বিকাশ / নগদ ইনস্ট্যান্ট পেআউট</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+            {Number(wallet.balance) < 0 && (
+              <View style={styles.dueAlert}>
+                <Text style={{ fontWeight: '800', color: '#be123c', fontSize: 15 }}>{t.dueWarn}: ৳{Math.abs(Number(wallet.balance)).toFixed(2)}</Text>
+                <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>Cash রাইডের প্ল্যাটফর্ম কমিশন পরিশোধ করতে নিচের বাটনে চাপুন।</Text>
+                <TouchableOpacity style={[styles.navyBtn, { backgroundColor: '#e11d48', marginBottom: 0, marginTop: 10 }]} onPress={() => setScreen('PAY_DUE')}>
+                  <Text style={[styles.navyBtnTxt, { color: '#fff' }]}>{t.payDueNow}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8, color: '#0F172A' }}>{t.cashOut}</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
               {['BKASH', 'NAGAD'].map((m) => (
                 <TouchableOpacity key={m} onPress={() => { setWMethod(m); setWNumber(m === 'BKASH' ? (pBkash || pPhone) : (pNagad || pPhone)); }}
-                  style={[styles.chip, wMethod === m && { backgroundColor: m === 'BKASH' ? '#e2136e' : '#ea580c' }]}>
-                  <Text style={{ color: wMethod === m ? '#fff' : '#0F172A', fontWeight: '800' }}>{m === 'BKASH' ? '🩷 bKash' : '🟠 Nagad'}</Text>
+                  style={[styles.payPickCard, wMethod === m && { borderColor: m === 'BKASH' ? '#E2136E' : '#F37021', backgroundColor: '#f8fafc' }]}>
+                  <PaymentLogo method={m} size={34} />
+                  <Text style={{ fontWeight: '800', color: '#0F172A' }}>{m}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <TextInput style={styles.input} placeholder="টাকার পরিমাণ (সর্বনিম্ন ৫০)" keyboardType="numeric" value={wAmount} onChangeText={setWAmount} />
-            <TextInput style={styles.input} placeholder={`${wMethod} অ্যাকাউন্ট নম্বর`} keyboardType="phone-pad" value={wNumber} onChangeText={setWNumber} />
+            <TextInput style={styles.input} placeholder="Amount (Min 50 BDT)" keyboardType="numeric" value={wAmount} onChangeText={setWAmount} />
+            <TextInput style={styles.input} placeholder={`${wMethod} Number`} keyboardType="phone-pad" value={wNumber} onChangeText={setWNumber} />
             <TouchableOpacity style={styles.navyBtn} onPress={submitWithdraw} disabled={loading}>
-              <Text style={styles.navyBtnTxt}>টাকা উত্তোলন করুন</Text>
+              <Text style={styles.navyBtnTxt}>Request Withdraw</Text>
             </TouchableOpacity>
 
-            <Text style={{ fontSize: 16, fontWeight: '800', marginTop: 20, marginBottom: 8, color: '#0F172A' }}>পরিশোধের অ্যাক্টিভিটি</Text>
+            <Text style={{ fontSize: 16, fontWeight: '800', marginTop: 10, marginBottom: 8 }}>Recent Payouts & Due Settlements</Text>
+            {duePayments.map((d) => (
+              <View key={`d_${d.id}`} style={styles.docRow}>
+                <PaymentLogo method={d.method} size={32} />
+                <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ fontWeight: '700' }}>Due Paid ({d.trx_id})</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{d.status}</Text></View>
+                <Text style={{ fontWeight: '800', color: '#00D2B8' }}>+{d.amount}৳</Text>
+              </View>
+            ))}
             {withdraws.map((w) => (
-              <View key={w.id} style={styles.docRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '700' }}>{w.method} ({w.account_number})</Text>
-                  <Text style={{ fontSize: 12, color: '#64748b' }}>{w.status} {w.trx_id ? `• ${w.trx_id}` : ''}</Text>
-                </View>
+              <View key={`w_${w.id}`} style={styles.docRow}>
+                <PaymentLogo method={w.method} size={32} />
+                <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ fontWeight: '700' }}>{w.account_number}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{w.status}</Text></View>
                 <Text style={{ fontWeight: '800', color: '#059669' }}>{w.amount}৳</Text>
               </View>
             ))}
           </ScrollView>
         )}
 
+        {/* ৫. PAY DUE TO ADMIN (bKash Merchant / Nagad Merchant / Bank + QR + Link) */}
+        {screen === 'PAY_DUE' && (
+          <ScrollView style={{ flex: 1, padding: 20 }}>
+            <TouchableOpacity onPress={() => setScreen('WALLET')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
+            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 12, marginBottom: 4 }}>Pay Commission Due</Text>
+            <Text style={{ color: '#64748b', marginBottom: 14 }}>Select Merchant / Bank to clear negative wallet balance</Text>
+
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+              {['BKASH', 'NAGAD', 'BANK'].map((m) => (
+                <TouchableOpacity key={m} onPress={() => setDueMethod(m)} style={[styles.payPickCard, dueMethod === m && { borderColor: '#00D2B8', backgroundColor: '#f0fdfa' }]}>
+                  <PaymentLogo method={m} size={32} />
+                  <Text style={{ fontWeight: '800', fontSize: 12 }}>{m}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.merchantBox}>
+              <Text style={{ fontWeight: '800', fontSize: 15, color: '#0F172A' }}>
+                {dueMethod === 'BKASH' ? `bKash Merchant: ${pubSettings.bkash_merchant || '01700000000'}`
+                  : dueMethod === 'NAGAD' ? `Nagad Merchant: ${pubSettings.nagad_merchant || '01800000000'}`
+                  : `Bank: ${pubSettings.bank_details || 'Contact Admin'}`}
+              </Text>
+              {(dueMethod === 'BKASH' ? pubSettings.bkash_qr_url : pubSettings.nagad_qr_url) ? (
+                <Image source={{ uri: dueMethod === 'BKASH' ? pubSettings.bkash_qr_url : pubSettings.nagad_qr_url }} style={{ width: 180, height: 180, alignSelf: 'center', marginTop: 12, borderRadius: 12 }} />
+              ) : null}
+              {(dueMethod === 'BKASH' ? pubSettings.bkash_pay_link : pubSettings.nagad_pay_link) ? (
+                <TouchableOpacity style={[styles.navyBtn, { backgroundColor: dueMethod === 'BKASH' ? '#E2136E' : '#F37021', marginTop: 12, marginBottom: 0 }]}
+                  onPress={() => Linking.openURL(dueMethod === 'BKASH' ? pubSettings.bkash_pay_link : pubSettings.nagad_pay_link)}>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Open {dueMethod} Payment Link</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            <Text style={styles.lbl}>Amount (BDT)</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={dueAmount} onChangeText={setDueAmount} />
+            <Text style={styles.lbl}>Transaction ID (TrxID)</Text>
+            <TextInput style={styles.input} placeholder="e.g. 9HG54K21" value={dueTrx} onChangeText={setDueTrx} />
+            <TouchableOpacity style={styles.navyBtn} onPress={submitDuePay} disabled={loading}>
+              <Text style={styles.navyBtnTxt}>Submit Payment Verification</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
+
+        {/* ৬. 30-DAY DAILY EARNINGS & INDIVIDUAL TRIP DETAILS */}
+        {screen === 'EARNINGS_DETAIL' && (
+          <View style={{ flex: 1 }}>
+            <View style={styles.topNav}>
+              <TouchableOpacity onPress={onClose}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
+              <Text style={styles.navTitle}>Earnings & Trip History</Text>
+              <View style={{ width: 24 }} />
+            </View>
+            <View style={styles.tabRow}>
+              <TouchableOpacity onPress={() => setEarnSubTab('DAILY')} style={[styles.tabBtn, earnSubTab === 'DAILY' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}>
+                <Text style={{ fontWeight: '800' }}>Last 30 Days ({dailyList.length})</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setEarnSubTab('TRIPS')} style={[styles.tabBtn, earnSubTab === 'TRIPS' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}>
+                <Text style={{ fontWeight: '800' }}>All Trips ({tripList.length})</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ flex: 1, padding: 18 }}>
+              {earnSubTab === 'DAILY' ? dailyList.map((d) => (
+                <View key={d.day} style={styles.tripCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 15, color: '#0F172A' }}>{d.day}</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>{d.trips} completed trips • Total Fare: ৳{d.total_fare}</Text>
+                  </View>
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#059669' }}>+৳{d.total_earning}</Text>
+                </View>
+              )) : tripList.map((tr) => (
+                <View key={tr.id} style={styles.tripCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 14, color: '#0F172A' }}>Trip #{tr.id} • {tr.payment_method}</Text>
+                    <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{tr.pickup_address} → {tr.drop_address}</Text>
+                    <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{tr.actual_distance_km} km • {tr.actual_duration_min} min • Fare ৳{tr.final_fare}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 16, fontWeight: '900', color: '#059669' }}>+৳{tr.driver_earning}</Text>
+                    <Text style={{ fontSize: 10, color: '#e11d48' }}>Comm -৳{tr.platform_commission}</Text>
+                  </View>
+                </View>
+              ))}
+              {(earnSubTab === 'DAILY' ? dailyList : tripList).length === 0 && <Text style={{ color: '#64748b', textAlign: 'center', marginTop: 20 }}>No completed trips yet.</Text>}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* ৭. PROFILE, MANAGE ACCOUNT, SETTINGS & REFER */}
         {(screen === 'PROFILE' || screen === 'PUBLIC_PROFILE') && (
           <ScrollView style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, justifyContent: 'space-between' }}>
               <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color="#0F172A" /></TouchableOpacity>
-              <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>Zoddir প্রোফাইল</Text>
+              <Text style={{ fontSize: 18, fontWeight: '800' }}>Zoddir Profile</Text>
               <TouchableOpacity onPress={() => { setDocTarget('AVATAR'); setScreen('DOC_CAPTURE'); }}><Ionicons name="camera" size={22} color="#00D2B8" /></TouchableOpacity>
             </View>
-
             <View style={styles.pubBanner}>
               <TouchableOpacity onPress={() => { setDocTarget('AVATAR'); setScreen('DOC_CAPTURE'); }} style={{ alignItems: 'center' }}>
                 {pAvatar ? <Image source={{ uri: pAvatar }} style={{ width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: '#00D2B8' }} />
                   : <View style={styles.bigAvatar}><Ionicons name="person" size={40} color="#00D2B8" /></View>}
-                <Text style={{ color: '#A3E635', fontSize: 12, fontWeight: '700', marginTop: 6 }}>📷 ছবি পরিবর্তন করতে ট্যাপ করুন</Text>
+                <Text style={{ color: '#A3E635', fontSize: 12, fontWeight: '700', marginTop: 6 }}>Tap to change photo</Text>
               </TouchableOpacity>
               <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 6 }}>{user?.name}</Text>
             </View>
-
-            <View style={{ padding: 20 }}>
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 18 }}>
-                <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A' }}>4.95 ★</Text><Text style={{ fontSize: 12, color: '#64748b' }}>স্টার রেটিং</Text></View>
-                <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A' }}>0%</Text><Text style={{ fontSize: 12, color: '#64748b' }}>ক্যান্সেলেশন রেট</Text></View>
-              </View>
-
-              <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 10, color: '#0F172A' }}>লাইফটাইম হাইলাইটস</Text>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <View style={styles.statCard}><Ionicons name="location" size={26} color="#00D2B8" /><Text style={{ fontSize: 22, fontWeight: '800', marginTop: 4 }}>{txns.length}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>মোট ট্রিপ</Text></View>
-                <View style={styles.statCard}><Ionicons name="calendar" size={26} color="#A3E635" /><Text style={{ fontSize: 22, fontWeight: '800', marginTop: 4 }}>1 মাস</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Zoddir-এর সাথে</Text></View>
-              </View>
+            <View style={{ padding: 20, flexDirection: 'row', gap: 10 }}>
+              <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800' }}>4.95 ★</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Rating</Text></View>
+              <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800' }}>{txns.length}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Activity</Text></View>
             </View>
           </ScrollView>
         )}
 
         {screen === 'MANAGE_ACCOUNT' && (
-          <View style={{ flex: 1 }}>
-            <View style={styles.topNav}>
-              <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-              <Text style={styles.navTitle}>Zoddir অ্যাকাউন্ট</Text>
-              <View style={{ width: 24 }} />
-            </View>
-            <View style={styles.tabRow}>
-              {['হোম', 'ব্যক্তিগত তথ্য', 'সুরক্ষা', 'গোপনীয়তা'].map((t) => (
-                <TouchableOpacity key={t} onPress={() => setAccTab(t)} style={[styles.tabBtn, accTab === t && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}>
-                  <Text style={{ fontSize: 12, fontWeight: accTab === t ? '800' : '600', color: accTab === t ? '#0F172A' : '#64748b' }}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <ScrollView style={{ padding: 20 }}>
-              {accTab === 'হোম' && (
-                <View style={{ alignItems: 'center' }}>
-                  {pAvatar ? <Image source={{ uri: pAvatar }} style={{ width: 84, height: 84, borderRadius: 42, borderWidth: 3, borderColor: '#00D2B8' }} />
-                    : <View style={styles.bigAvatar}><Ionicons name="person" size={40} color="#00D2B8" /></View>}
-                  <Text style={{ fontSize: 22, fontWeight: '800', marginTop: 10 }}>{user?.name}</Text>
-                  <Text style={{ color: '#64748b', marginBottom: 18 }}>{user?.phone}</Text>
-                  <TouchableOpacity style={styles.navyBtn} onPress={() => setAccTab('ব্যক্তিগত তথ্য')}><Text style={styles.navyBtnTxt}>ব্যক্তিগত তথ্য এডিট করুন</Text></TouchableOpacity>
-                </View>
-              )}
-              {accTab === 'ব্যক্তিগত তথ্য' && (
-                <View>
-                  <Text style={styles.lbl}>নাম</Text><TextInput style={styles.input} value={pName} onChangeText={setPName} />
-                  <Text style={styles.lbl}>ফোন নম্বর</Text><TextInput style={styles.input} value={pPhone} onChangeText={setPPhone} />
-                  <Text style={styles.lbl}>বিকাশ নম্বর</Text><TextInput style={styles.input} value={pBkash} onChangeText={setPBkash} />
-                  <Text style={styles.lbl}>নগদ নম্বর</Text><TextInput style={styles.input} value={pNagad} onChangeText={setPNagad} />
-                  <TouchableOpacity style={styles.navyBtn} onPress={() => saveAll()}><Text style={styles.navyBtnTxt}>সেভ করুন</Text></TouchableOpacity>
-                </View>
-              )}
-              {accTab === 'সুরক্ষা' && <Text style={{ color: '#475569' }}>আপনার ডিভাইস ও লগইন সেশন সম্পূর্ণ সুরক্ষিত আছে।</Text>}
-              {accTab === 'গোপনীয়তা' && <Text style={{ color: '#475569' }}>আপনার GPS শুধুমাত্র ট্রিপ চলার সময় ব্যবহৃত হয়।</Text>}
-            </ScrollView>
-          </View>
+          <ScrollView style={{ flex: 1, padding: 20 }}>
+            <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
+            <Text style={{ fontSize: 24, fontWeight: '800', marginVertical: 14 }}>Personal Info</Text>
+            <Text style={styles.lbl}>Name</Text><TextInput style={styles.input} value={pName} onChangeText={setPName} />
+            <Text style={styles.lbl}>Phone</Text><TextInput style={styles.input} value={pPhone} onChangeText={setPPhone} />
+            <Text style={styles.lbl}>bKash Number</Text><TextInput style={styles.input} value={pBkash} onChangeText={setPBkash} />
+            <Text style={styles.lbl}>Nagad Number</Text><TextInput style={styles.input} value={pNagad} onChangeText={setPNagad} />
+            <TouchableOpacity style={styles.navyBtn} onPress={() => saveAll()}><Text style={styles.navyBtnTxt}>Save</Text></TouchableOpacity>
+          </ScrollView>
         )}
 
         {screen === 'SETTINGS' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 28, fontWeight: '800', marginVertical: 14, color: '#0F172A' }}>অ্যাপ সেটিংস</Text>
-            <TouchableOpacity style={styles.docRow} onPress={() => setLang(lang === 'bn' ? 'en' : 'bn')}>
-              <Ionicons name="globe-outline" size={22} color="#0F172A" />
-              <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>অ্যাপের ভাষা</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{lang === 'bn' ? 'বাংলা (বাংলাদেশ)' : 'English'}</Text></View>
-            </TouchableOpacity>
+            <Text style={{ fontSize: 26, fontWeight: '800', marginVertical: 14 }}>{t.settings}</Text>
+            <Text style={styles.lbl}>{t.language}</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+              <TouchableOpacity onPress={() => setLang('en')} style={[styles.chip, lang === 'en' && { backgroundColor: '#0F172A' }]}>
+                <Text style={{ color: lang === 'en' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>English (Default)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setLang('bn')} style={[styles.chip, lang === 'bn' && { backgroundColor: '#0F172A' }]}>
+                <Text style={{ color: lang === 'bn' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>বাংলা (Bangladesh)</Text>
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity style={styles.docRow} onPress={() => setNightMode(!nightMode)}>
               <Ionicons name="moon-outline" size={22} color="#0F172A" />
-              <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>নাইট মোড</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{nightMode ? 'চালু' : 'বন্ধ'}</Text></View>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.docRow} onPress={() => Alert.alert('জরুরি কন্টাক্ট', 'পুলিশ/সাপোর্ট: 999')}>
-              <Ionicons name="call-outline" size={22} color="#0F172A" />
-              <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>ইমার্জেন্সি কন্টাক্ট</Text><Text style={{ fontSize: 12, color: '#64748b' }}>999 / সাপোর্ট</Text></View>
+              <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>{t.nightMode}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{nightMode ? 'ON' : 'OFF'}</Text></View>
             </TouchableOpacity>
           </ScrollView>
         )}
@@ -411,10 +479,9 @@ export default function DriverMenus({
         {screen === 'REFER' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 28, fontWeight: '800', marginTop: 12, color: '#0F172A' }}>বন্ধুদের রেফার করুন</Text>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#00D2B8', marginVertical: 10 }}>রাইড সম্পূর্ণ করা প্রত্যেক বন্ধুর জন্য 500৳ বোনাস!</Text>
-            <TouchableOpacity style={[styles.navyBtn, { marginTop: 24 }]} onPress={() => Share.share({ message: `Zoddir Driver-এ জয়েন করুন এবং ৫০০ টাকা বোনাস পান! রেফার কোড: ${user?.phone}` })}>
-              <Text style={styles.navyBtnTxt}>আমন্ত্রণ জানান</Text>
+            <Text style={{ fontSize: 26, fontWeight: '800', marginTop: 12 }}>{t.referEarn}</Text>
+            <TouchableOpacity style={[styles.navyBtn, { marginTop: 24 }]} onPress={() => Share.share({ message: `Join Zoddir Driver & earn 500 BDT! Code: ${user?.phone}` })}>
+              <Text style={styles.navyBtnTxt}>Invite Friends</Text>
             </TouchableOpacity>
           </ScrollView>
         )}
@@ -429,7 +496,7 @@ const styles = StyleSheet.create({
   bigHeaderTxt: { fontSize: 28, fontWeight: '800', marginTop: 12, color: '#0F172A' },
   topNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   navTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderColor: '#f8fafc' },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderColor: '#f8fafc' },
   menuIconBox: { width: 38, height: 38, borderRadius: 12, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
   menuTxt: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
   menuSub: { fontSize: 12, color: '#64748b' },
@@ -442,9 +509,13 @@ const styles = StyleSheet.create({
   navyBtn: { backgroundColor: '#0F172A', padding: 15, borderRadius: 14, alignItems: 'center', marginTop: 8, marginBottom: 20 },
   navyBtnTxt: { color: '#00D2B8', fontWeight: '800', fontSize: 15 },
   grayBtn: { backgroundColor: '#f1f5f9', padding: 15, borderRadius: 12, alignItems: 'center', marginTop: 12 },
-  docRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  docRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   docPreviewBox: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 16, marginVertical: 20, padding: 12 },
-  walletBox: { backgroundColor: '#0F172A', padding: 20, borderRadius: 18, marginBottom: 18, borderWidth: 1.5, borderColor: '#00D2B8' },
+  walletBox: { backgroundColor: '#0F172A', padding: 20, borderRadius: 18, marginBottom: 16, borderWidth: 1.5, borderColor: '#00D2B8' },
+  dueAlert: { backgroundColor: '#fff1f2', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#fecdd3', marginBottom: 16 },
+  payPickCard: { flex: 1, alignItems: 'center', gap: 6, padding: 12, borderRadius: 14, borderWidth: 2, borderColor: '#e2e8f0' },
+  merchantBox: { backgroundColor: '#f8fafc', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 16 },
+  tripCard: { flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: '#f8fafc', borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' },
   pubBanner: { backgroundColor: '#0F172A', paddingVertical: 28, alignItems: 'center' },
   bigAvatar: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#0F172A', borderWidth: 2, borderColor: '#00D2B8', alignItems: 'center', justifyContent: 'center' },
   statCard: { flex: 1, backgroundColor: '#f8fafc', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' },
