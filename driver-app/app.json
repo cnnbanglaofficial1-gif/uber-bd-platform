@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "driver-app",
-    "slug": "driver-app",
+    "name": "Zoddir Driver",
+    "slug": "zoddir-driver",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,6 +11,7 @@
     },
     "android": {
       "adaptiveIcon": {
+        "package": "com.zoddir.driver",
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",

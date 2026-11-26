@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export default function LeafletMap({
@@ -17,11 +17,11 @@ export default function LeafletMap({
       <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
       <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
       <style>
-        body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #f3f4f6; }
-        .pickup-dot { width: 16px; height: 16px; background: #000; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
-        .drop-sq { width: 14px; height: 14px; background: #000; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
-        .car-pin { font-size: 24px; line-height: 24px; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35)); }
-        .eta-tag { background: #fff; color: #000; font-family: sans-serif; font-weight: 800; font-size: 12px; padding: 4px 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap; }
+        body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #f1f5f9; }
+        .pickup-dot { width: 18px; height: 18px; background: #00D2B8; border: 3px solid #0F172A; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,210,184,0.6); }
+        .drop-sq { width: 16px; height: 16px; background: #A3E635; border: 3px solid #0F172A; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+        .car-pin { font-size: 24px; line-height: 24px; filter: drop-shadow(0 2px 4px rgba(15,23,42,0.4)); }
+        .eta-tag { background: #0F172A; color: #A3E635; font-family: sans-serif; font-weight: 800; font-size: 12px; padding: 5px 10px; border-radius: 10px; border: 1.5px solid #00D2B8; box-shadow: 0 3px 10px rgba(0,0,0,0.25); white-space: nowrap; }
       </style>
     </head>
     <body>
@@ -35,17 +35,10 @@ export default function LeafletMap({
           attributionControl: false
         });
 
-        let mapLoaded = false;
-        let pendingData = null;
-        let lastRecenter = 0;
-
+        let mapLoaded = false, pendingData = null, lastRecenter = 0;
         const pEl = document.createElement('div'); pEl.className = 'pickup-dot';
         const pickupMarker = new maplibregl.Marker({ element: pEl }).setLngLat([${pickup.lng}, ${pickup.lat}]).addTo(map);
-
-        let dropMarker = null;
-        let driverMarker = null;
-        let etaMarker = null;
-        let nearbyMarkers = [];
+        let dropMarker = null, driverMarker = null, etaMarker = null, nearbyMarkers = [];
 
         map.on('load', () => {
           mapLoaded = true;
@@ -53,7 +46,7 @@ export default function LeafletMap({
           map.addLayer({
             id: 'route-line', type: 'line', source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#000000', 'line-width': 4.5 }
+            paint: { 'line-color': '#0F172A', 'line-width': 5 }
           });
           if (pendingData) applyUpdate(pendingData);
         });
@@ -61,26 +54,20 @@ export default function LeafletMap({
         map.on('click', (e) => {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_CLICK', lat: e.lngLat.lat, lng: e.lngLat.lng }));
         });
-
         map.on('moveend', () => {
           const c = map.getCenter();
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_CENTER', lat: c.lat, lng: c.lng }));
         });
 
         function applyUpdate(data) {
-          if (data.confirmMode) {
-            pickupMarker.getElement().style.display = 'none';
-          } else {
-            pickupMarker.getElement().style.display = 'block';
-            if (data.pickup) pickupMarker.setLngLat([data.pickup.lng, data.pickup.lat]);
-          }
+          if (data.confirmMode) pickupMarker.getElement().style.display = 'none';
+          else { pickupMarker.getElement().style.display = 'block'; if (data.pickup) pickupMarker.setLngLat([data.pickup.lng, data.pickup.lat]); }
 
           if (data.recenterCount && data.recenterCount !== lastRecenter && data.pickup) {
             lastRecenter = data.recenterCount;
             map.flyTo({ center: [data.pickup.lng, data.pickup.lat], zoom: 16 });
             return;
           }
-
           if (data.drop && !data.confirmMode) {
             if (!dropMarker) {
               const dEl = document.createElement('div'); dEl.className = 'drop-sq';
@@ -95,7 +82,6 @@ export default function LeafletMap({
             } else driverMarker.setLngLat([data.driverLoc.lng, data.driverLoc.lat]);
           } else if (driverMarker) { driverMarker.remove(); driverMarker = null; }
 
-          // কাছাকাছি অনলাইন গাড়িগুলো দেখানো
           nearbyMarkers.forEach(m => m.remove());
           nearbyMarkers = [];
           if (data.nearbyDrivers && !data.confirmMode) {
@@ -116,8 +102,7 @@ export default function LeafletMap({
             if (coords.length > 1) {
               if (data.etaText) {
                 const eEl = document.createElement('div'); eEl.className = 'eta-tag'; eEl.innerText = data.etaText;
-                const mid = coords[Math.floor(coords.length * 0.25)];
-                etaMarker = new maplibregl.Marker({ element: eEl, offset: [0, -18] }).setLngLat(mid).addTo(map);
+                etaMarker = new maplibregl.Marker({ element: eEl, offset: [0, -20] }).setLngLat(coords[Math.floor(coords.length * 0.3)]).addTo(map);
               }
               const bounds = new maplibregl.LngLatBounds();
               coords.forEach(c => bounds.extend(c));
@@ -125,11 +110,7 @@ export default function LeafletMap({
             }
           }
         }
-
-        window.updateMap = function(data) {
-          if (!mapLoaded) { pendingData = data; return; }
-          applyUpdate(data);
-        };
+        window.updateMap = function(data) { if (!mapLoaded) { pendingData = data; return; } applyUpdate(data); };
       </script>
     </body>
     </html>
@@ -171,8 +152,8 @@ export default function LeafletMap({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centerPinWrap: { position: 'absolute', top: '42%', left: '50%', marginLeft: -40, marginTop: -55, width: 80, height: 80, alignItems: 'center', justifyContent: 'center' },
-  centerCircle: { position: 'absolute', width: 76, height: 76, borderRadius: 38, backgroundColor: 'rgba(59,130,246,0.18)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.4)' },
-  centerPinHead: { width: 22, height: 22, borderRadius: 4, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  centerPinInner: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
-  centerPinStick: { width: 2.5, height: 14, backgroundColor: '#000' }
+  centerCircle: { position: 'absolute', width: 76, height: 76, borderRadius: 38, backgroundColor: 'rgba(0,210,184,0.18)', borderWidth: 1.5, borderColor: '#00D2B8' },
+  centerPinHead: { width: 22, height: 22, borderRadius: 6, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#00D2B8' },
+  centerPinInner: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#A3E635' },
+  centerPinStick: { width: 3, height: 14, backgroundColor: '#0F172A' }
 });
