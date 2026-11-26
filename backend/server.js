@@ -14,7 +14,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 
-// অটোমেটিক ডাটাবেস কলাম আপগ্রেড
 pool.query(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS bkash_number VARCHAR(20);
@@ -43,7 +42,7 @@ function auth(roles = []) {
       }
       const uRes = await pool.query('SELECT is_active FROM users WHERE id = $1', [decoded.id]);
       if (!uRes.rows.length || !uRes.rows[0].is_active) {
-        return res.status(403).json({ error: 'আপনার অ্যাকাউন্টটি সাসপেন্ড করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
+        return res.status(403).json({ error: 'আপনার অ্যাকাউন্টটি সাসপেন্ড করা হয়েছে। Zoddir সাপোর্টে যোগাযোগ করুন।' });
       }
       req.user = decoded;
       next();
@@ -54,10 +53,10 @@ function auth(roles = []) {
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'Uber BD Platform Backend Running 🚀', time: new Date() });
+  res.json({ status: 'Zoddir Platform Backend Running 🚀', time: new Date() });
 });
 
-// ১. REGISTER, LOGIN, PROFILE & PASSWORD CHANGE
+// ১. AUTH & PROFILE
 app.post('/api/auth/register', async (req, res) => {
   const { name, phone, email, password, role, vehicle_type, vehicle_model, plate_number, license_number } = req.body;
   const client = await pool.connect();
@@ -127,13 +126,9 @@ app.put('/api/auth/profile', auth(['RIDER', 'DRIVER', 'ADMIN']), async (req, res
   try {
     const result = await pool.query(
       `UPDATE users SET
-        name = COALESCE($1, name),
-        phone = COALESCE($2, phone),
-        email = COALESCE($3, email),
-        gender = COALESCE($4, gender),
-        avatar_url = COALESCE($5, avatar_url),
-        bkash_number = COALESCE($6, bkash_number),
-        nagad_number = COALESCE($7, nagad_number)
+        name = COALESCE($1, name), phone = COALESCE($2, phone), email = COALESCE($3, email),
+        gender = COALESCE($4, gender), avatar_url = COALESCE($5, avatar_url),
+        bkash_number = COALESCE($6, bkash_number), nagad_number = COALESCE($7, nagad_number)
        WHERE id = $8
        RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number`,
       [name || null, phone || null, email ?? null, gender ?? null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
@@ -153,20 +148,19 @@ app.post('/api/auth/change-password', auth(['RIDER', 'DRIVER', 'ADMIN']), async 
     }
     const newHash = await bcrypt.hash(new_password, 10);
     await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.user.id]);
-    res.json({ success: true, message: 'পাসওয়ার্ড পরিবর্তন হয়েছে!' });
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ২. NEARBY ONLINE DRIVERS (ম্যাপে চলন্ত গাড়ি দেখানোর জন্য)
+// ২. NEARBY ONLINE DRIVERS
 app.get('/api/drivers/nearby', async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json({ drivers: [] });
   try {
-    const types = ['BIKE', 'CNG', 'CAR'];
     const all = [];
-    for (const t of types) {
+    for (const t of ['BIKE', 'CNG', 'CAR']) {
       const list = await redis.georadius(`drivers:online:${t}`, Number(lng), Number(lat), 10, 'km', 'WITHCOORD');
       for (const item of list) {
         all.push({ id: item[0], vehicle_type: t, lng: Number(item[1][0]), lat: Number(item[1][1]) });
@@ -224,7 +218,7 @@ app.put('/api/driver/profile', auth(['DRIVER']), async (req, res) => {
   }
 });
 
-// ৪. ফ্রি OSRM রুট ও ভাড়া হিসাব
+// ৪. OSRM ESTIMATE
 app.post('/api/rides/estimate', async (req, res) => {
   const { pickup_lat, pickup_lng, drop_lat, drop_lng, promo_code } = req.body;
   try {
@@ -276,7 +270,7 @@ app.post('/api/rides/estimate', async (req, res) => {
   }
 });
 
-// ৫. RIDE REQUEST, HISTORY, ACTIVE, ACCEPT, START, CANCEL & COMPLETE
+// ৫. RIDE LIFECYCLE
 app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
   const { vehicle_type, pickup_lat, pickup_lng, pickup_address, drop_lat, drop_lng, drop_address, estimated_fare, payment_method, promo_code } = req.body;
   try {
@@ -520,7 +514,7 @@ app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
   }
 });
 
-// ৬. bKash / Nagad পেমেন্ট
+// ৬. DIGITAL PAYMENT
 app.post('/api/rides/:id/pay', auth(['RIDER']), async (req, res) => {
   const { method, trx_id } = req.body;
   const client = await pool.connect();
@@ -552,7 +546,7 @@ app.post('/api/rides/:id/pay', auth(['RIDER']), async (req, res) => {
   }
 });
 
-// ৭. DRIVER STATUS, QUESTS, WALLET & WITHDRAW
+// ৭. DRIVER STATUS, QUESTS, WALLET
 app.post('/api/driver/status', auth(['DRIVER']), async (req, res) => {
   const { is_online, vehicle_type } = req.body;
   const dp = await pool.query('SELECT is_approved, vehicle_type FROM driver_profiles WHERE user_id = $1', [req.user.id]);
@@ -613,22 +607,34 @@ app.post('/api/driver/withdraw', auth(['DRIVER']), async (req, res) => {
   }
 });
 
-// ৮. ADMIN APIS
+// ৮. ZODDIR PRO ADMIN APIS
 app.get('/api/admin/overview', auth(['ADMIN']), async (req, res) => {
-  const rides = await pool.query('SELECT COUNT(*) AS total_rides, COALESCE(SUM(platform_commission),0) AS total_commission FROM rides');
+  const stats = await pool.query(
+    `SELECT COUNT(*) AS total_rides,
+     COUNT(*) FILTER (WHERE status IN ('SEARCHING','ACCEPTED','STARTED')) AS active_rides,
+     COALESCE(SUM(final_fare),0) AS total_revenue,
+     COALESCE(SUM(platform_commission),0) AS total_commission FROM rides`
+  );
+  const rides = await pool.query(
+    `SELECT r.*, ru.name AS rider_name, ru.phone AS rider_phone, du.name AS driver_name
+     FROM rides r LEFT JOIN users ru ON r.rider_id = ru.id LEFT JOIN users du ON r.driver_id = du.id
+     ORDER BY r.created_at DESC LIMIT 30`
+  );
   const rates = await pool.query('SELECT * FROM vehicle_rates');
   const promos = await pool.query('SELECT * FROM rider_promos ORDER BY id DESC');
   const quests = await pool.query('SELECT * FROM driver_quests ORDER BY id DESC');
   const withdraws = await pool.query('SELECT w.*, u.name, u.phone FROM withdraw_requests w JOIN users u ON w.driver_id = u.id ORDER BY w.created_at DESC');
   const drivers = await pool.query(
-    `SELECT u.id, u.name, u.phone, u.is_active, u.avatar_url, dp.*
-     FROM users u JOIN driver_profiles dp ON u.id = dp.user_id ORDER BY u.id DESC`
+    `SELECT u.id, u.name, u.phone, u.is_active, u.avatar_url, COALESCE(w.balance,0) AS wallet_balance, dp.*
+     FROM users u JOIN driver_profiles dp ON u.id = dp.user_id LEFT JOIN wallets w ON u.id = w.user_id ORDER BY u.id DESC`
   );
   const riders = await pool.query(
-    "SELECT id, name, phone, is_active, created_at FROM users WHERE role = 'RIDER' ORDER BY id DESC LIMIT 50"
+    `SELECT u.id, u.name, u.phone, u.is_active, u.avatar_url, u.created_at,
+     (SELECT COUNT(*) FROM rides WHERE rider_id = u.id) AS total_rides
+     FROM users u WHERE u.role = 'RIDER' ORDER BY u.id DESC LIMIT 50`
   );
   res.json({
-    stats: rides.rows[0], rates: rates.rows, promos: promos.rows,
+    stats: stats.rows[0], rides: rides.rows, rates: rates.rows, promos: promos.rows,
     quests: quests.rows, withdraws: withdraws.rows, drivers: drivers.rows, riders: riders.rows
   });
 });
@@ -645,13 +651,43 @@ app.post('/api/admin/drivers/:id/verify', auth(['ADMIN']), async (req, res) => {
   res.json(result.rows[0]);
 });
 
+app.post('/api/admin/drivers/:id/wallet-adjust', auth(['ADMIN']), async (req, res) => {
+  const { amount, note } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const wRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [req.params.id]);
+    const newBal = Number((Number(wRes.rows[0].balance) + Number(amount)).toFixed(2));
+    await client.query('UPDATE wallets SET balance = $1 WHERE user_id = $2', [newBal, req.params.id]);
+    await client.query(
+      'INSERT INTO wallet_transactions (user_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5)',
+      [req.params.id, 'ADMIN_ADJUST', Number(amount), newBal, note || 'Admin Wallet Bonus/Adjust']
+    );
+    await client.query('COMMIT');
+    res.json({ balance: newBal });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/admin/users/:id/toggle-active', auth(['ADMIN']), async (req, res) => {
   const { is_active } = req.body;
   const result = await pool.query('UPDATE users SET is_active = $1 WHERE id = $2 RETURNING id, name, role, is_active', [is_active, req.params.id]);
-  if (!is_active) {
-    await pool.query('UPDATE driver_profiles SET is_online = FALSE WHERE user_id = $1', [req.params.id]);
-  }
+  if (!is_active) await pool.query('UPDATE driver_profiles SET is_online = FALSE WHERE user_id = $1', [req.params.id]);
   res.json(result.rows[0]);
+});
+
+app.post('/api/admin/rides/:id/force-cancel', auth(['ADMIN']), async (req, res) => {
+  const result = await pool.query("UPDATE rides SET status = 'CANCELLED', cancel_reason = 'Cancelled by Admin' WHERE id = $1 RETURNING *", [req.params.id]);
+  if (result.rows[0]) {
+    const r = result.rows[0];
+    if (r.driver_id) io.to(`driver_${r.driver_id}`).emit('ride_cancelled', r);
+    io.to(`rider_${r.rider_id}`).emit('ride_cancelled', r);
+  }
+  res.json(result.rows[0] || {});
 });
 
 app.put('/api/admin/rates/:type', auth(['ADMIN']), async (req, res) => {
@@ -672,6 +708,11 @@ app.post('/api/admin/promos', auth(['ADMIN']), async (req, res) => {
   res.json(result.rows[0]);
 });
 
+app.post('/api/admin/promos/:id/toggle', auth(['ADMIN']), async (req, res) => {
+  const result = await pool.query('UPDATE rider_promos SET is_active = NOT is_active WHERE id = $1 RETURNING *', [req.params.id]);
+  res.json(result.rows[0]);
+});
+
 app.post('/api/admin/quests', auth(['ADMIN']), async (req, res) => {
   const { title, target_trips, bonus_amount, start_time, end_time } = req.body;
   const result = await pool.query(
@@ -681,32 +722,51 @@ app.post('/api/admin/quests', auth(['ADMIN']), async (req, res) => {
   res.json(result.rows[0]);
 });
 
-app.post('/api/admin/withdraws/:id/approve', auth(['ADMIN']), async (req, res) => {
-  const { trx_id } = req.body;
-  const result = await pool.query(
-    "UPDATE withdraw_requests SET status = 'COMPLETED', trx_id = $1 WHERE id = $2 RETURNING *",
-    [trx_id || 'MANUAL_PAID', req.params.id]
-  );
+app.post('/api/admin/quests/:id/toggle', auth(['ADMIN']), async (req, res) => {
+  const result = await pool.query('UPDATE driver_quests SET is_active = NOT is_active WHERE id = $1 RETURNING *', [req.params.id]);
   res.json(result.rows[0]);
 });
 
-// ৯. REAL-TIME SOCKET
-io.on('connection', (socket) => {
-  socket.on('join_room', ({ role, userId }) => {
-    socket.join(`${role.toLowerCase()}_${userId}`);
-  });
+app.post('/api/admin/withdraws/:id/approve', auth(['ADMIN']), async (req, res) => {
+  const { trx_id } = req.body;
+  const result = await pool.query("UPDATE withdraw_requests SET status = 'COMPLETED', trx_id = $1 WHERE id = $2 RETURNING *", [trx_id || 'MANUAL_PAID', req.params.id]);
+  res.json(result.rows[0]);
+});
 
+app.post('/api/admin/withdraws/:id/reject', auth(['ADMIN']), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const wr = await client.query("SELECT * FROM withdraw_requests WHERE id = $1 AND status = 'PENDING' FOR UPDATE", [req.params.id]);
+    if (!wr.rows.length) throw new Error('Already processed');
+    const reqRow = wr.rows[0];
+    const wRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [reqRow.driver_id]);
+    const newBal = Number((Number(wRes.rows[0].balance) + Number(reqRow.amount)).toFixed(2));
+    await client.query('UPDATE wallets SET balance = $1, total_withdrawn = GREATEST(0, total_withdrawn - $2) WHERE user_id = $3', [newBal, reqRow.amount, reqRow.driver_id]);
+    await client.query("UPDATE withdraw_requests SET status = 'FAILED', trx_id = 'REJECTED_REFUNDED' WHERE id = $1", [reqRow.id]);
+    await client.query('INSERT INTO wallet_transactions (user_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5)',
+      [reqRow.driver_id, 'WITHDRAW_REFUND', Number(reqRow.amount), newBal, `উইথড্র বাতিল রিফান্ড (#${reqRow.id})`]);
+    await client.query('COMMIT');
+    res.json({ refunded: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ৯. SOCKET.IO
+io.on('connection', (socket) => {
+  socket.on('join_room', ({ role, userId }) => socket.join(`${role.toLowerCase()}_${userId}`));
   socket.on('driver_location_update', async ({ driverId, vehicleType, lat, lng, accuracy, activeRideId, riderId }) => {
     await redis.geoadd(`drivers:online:${vehicleType}`, lng, lat, driverId.toString());
     if (activeRideId) {
       await redis.rpush(`ride:gps:${activeRideId}`, JSON.stringify({ lat, lng, accuracy, timestamp: Date.now() }));
-      if (riderId) {
-        io.to(`rider_${riderId}`).emit('driver_live_location', { lat, lng });
-      }
+      if (riderId) io.to(`rider_${riderId}`).emit('driver_live_location', { lat, lng });
     }
   });
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
+server.listen(PORT, () => console.log(`🚀 Zoddir Server running on port ${PORT}`));

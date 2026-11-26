@@ -1,33 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity, Platform, Modal,
-  ScrollView, Alert, ActivityIndicator, StatusBar, Animated, Image
+  ScrollView, Alert, ActivityIndicator, StatusBar, Animated, Image, Share, Linking
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import LeafletMap from './LeafletMap';
+import AccountModal from './AccountModal';
 
 const API = 'https://uber-bd-platform.onrender.com';
-const TOP_PAD = Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 10 : 50;
+const TOP_PAD = Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 48;
 
-// Uber-style Searching Radar Animation Component
-function SearchingRadar() {
-  const pulse = useRef(new Animated.Value(0)).current;
+function calcKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, dLat = ((lat2 - lat1) * Math.PI) / 180, dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(1);
+}
+
+function ProgressBar() {
+  const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.loop(
-      Animated.timing(pulse, { toValue: 1, duration: 1800, useNativeDriver: true })
-    ).start();
+    Animated.loop(Animated.timing(anim, { toValue: 1, duration: 1500, useNativeDriver: true })).start();
   }, []);
-
-  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 2.4] });
-  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] });
-
+  const translateX = anim.interpolate({ inputRange: [0, 1], outputRange: [-180, 320] });
   return (
-    <View style={{ alignItems: 'center', justifyContent: 'center', height: 90, marginVertical: 4 }}>
-      <Animated.View style={[styles.radarRing, { transform: [{ scale }], opacity }]} />
-      <View style={styles.radarCenter}><Text style={{ fontSize: 26 }}>🚕</Text></View>
+    <View style={styles.progTrack}>
+      <Animated.View style={[styles.progFill, { transform: [{ translateX }] }]} />
     </View>
   );
 }
@@ -41,47 +41,45 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Pickup & Drop States
+  // Main Tabs & Ride Flow Stage
+  const [mainTab, setMainTab] = useState('HOME'); // 'HOME' | 'SERVICES' | 'ACTIVITY' | 'ACCOUNT'
+  const [stage, setStage] = useState('MAIN'); // 'MAIN' | 'PLAN' | 'CHOOSE' | 'CONFIRM_PICKUP' | 'ACTIVE'
+
+  // Location & Map
   const [pickup, setPickup] = useState({ lat: 23.8103, lng: 90.4125 });
-  const [pickupAddress, setPickupAddress] = useState('বর্তমান লোকেশন খুঁজছে...');
-  const [pickupQuery, setPickupQuery] = useState('');
+  const [pickupAddress, setPickupAddress] = useState('Current location');
+  const [pickupQuery, setPickupQuery] = useState('Current location');
   const [drop, setDrop] = useState(null);
   const [dropAddress, setDropAddress] = useState('');
   const [dropQuery, setDropQuery] = useState('');
-  const [activeField, setActiveField] = useState('DROP'); // 'PICKUP' | 'DROP'
+  const [activeField, setActiveField] = useState('DROP');
   const [searchResults, setSearchResults] = useState([]);
   const [recenterCount, setRecenterCount] = useState(0);
+  const [centerTemp, setCenterTemp] = useState(null);
+  const [nearbyDrivers, setNearbyDrivers] = useState([]);
 
-  // Estimate & Ride States
+  // Ride & Fare
   const [routeCoords, setRouteCoords] = useState([]);
   const [tripMeta, setTripMeta] = useState(null);
   const [estimates, setEstimates] = useState([]);
-  const [selectedVehicle, setSelectedVehicle] = useState('BIKE');
+  const [selectedVehicle, setSelectedVehicle] = useState('CAR');
   const [promoCode, setPromoCode] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [activeRide, setActiveRide] = useState(null);
   const [driverLoc, setDriverLoc] = useState(null);
+  const [history, setHistory] = useState([]);
   const [payPin, setPayPin] = useState('');
 
-  // Profile Modal States
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
-  const [editBkash, setEditBkash] = useState('');
-  const [editNagad, setEditNagad] = useState('');
-  const [editAvatar, setEditAvatar] = useState(null);
+  // Modals
+  const [modalMode, setModalMode] = useState(null); // 'ACCOUNT' | 'WALLET' | 'PAY_WITH' | 'DRIVER_PROFILE'
+  const [cancelStep, setCancelStep] = useState(0); // 0=none, 1=confirm, 2=reasons
 
-  const reverseGeocode = async (lat, lng, setter) => {
+  const reverseGeo = async (lat, lng, cb) => {
     try {
       const res = await axios.get(`https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}`);
       const p = res.data.features?.[0]?.properties;
-      if (p) {
-        const label = [p.name, p.street, p.district || p.city].filter(Boolean).slice(0, 2).join(', ');
-        setter(label || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-      }
-    } catch {
-      setter(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-    }
+      if (p) cb([p.name, p.street, p.district || p.city].filter(Boolean).slice(0, 2).join(', ') || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+    } catch { cb(`${lat.toFixed(4)}, ${lng.toFixed(4)}`); }
   };
 
   const fetchGPS = async () => {
@@ -91,36 +89,52 @@ export default function App() {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
         setPickup(coords);
-        reverseGeocode(coords.lat, coords.lng, (addr) => {
-          setPickupAddress(addr);
-          setPickupQuery(addr);
-        });
-        if (drop) fetchEstimate(coords, drop);
+        reverseGeo(coords.lat, coords.lng, (addr) => { setPickupAddress(addr); setPickupQuery(addr); });
+        loadNearby(coords.lat, coords.lng);
       }
     } catch {}
   };
 
-  const handleRecenter = async () => {
-    await fetchGPS();
-    setRecenterCount((c) => c + 1);
+  const loadNearby = async (lat, lng) => {
+    try {
+      const res = await axios.get(`${API}/api/drivers/nearby?lat=${lat}&lng=${lng}`);
+      setNearbyDrivers(res.data.drivers || []);
+    } catch {}
   };
 
-  useEffect(() => { handleRecenter(); }, []);
+  const loadHistory = async () => {
+    if (!token) return;
+    try {
+      const res = await axios.get(`${API}/api/rides/history`, { headers: { Authorization: `Bearer ${token}` } });
+      setHistory(res.data.rides || []);
+    } catch {}
+  };
+
+  useEffect(() => { fetchGPS(); }, []);
 
   useEffect(() => {
     if (!user || !token) return;
+    loadHistory();
     const socket = io(API, { transports: ['websocket'] });
     socket.on('connect', () => socket.emit('join_room', { role: 'RIDER', userId: user.id }));
-    socket.on('ride_accepted', (ride) => setActiveRide(ride));
-    socket.on('ride_started', (ride) => setActiveRide(ride));
-    socket.on('ride_completed', (ride) => setActiveRide(ride));
-    socket.on('ride_cancelled', () => resetRide());
+    socket.on('ride_accepted', (r) => { setActiveRide(r); setStage('ACTIVE'); });
+    socket.on('ride_started', (r) => { setActiveRide(r); setStage('ACTIVE'); });
+    socket.on('ride_completed', (r) => { setActiveRide(r); setStage('ACTIVE'); loadHistory(); });
+    socket.on('ride_cancelled', () => resetToHome());
     socket.on('driver_live_location', (loc) => setDriverLoc(loc));
 
     const checkActive = async () => {
       try {
         const res = await axios.get(`${API}/api/rides/my-active`, { headers: { Authorization: `Bearer ${token}` } });
-        setActiveRide(res.data.ride || null);
+        if (res.data.ride) {
+          setActiveRide(res.data.ride);
+          if (res.data.ride.status !== 'COMPLETED' || res.data.ride.payment_status === 'PENDING') {
+            setStage('ACTIVE');
+          }
+        } else {
+          setActiveRide(null);
+        }
+        loadNearby(pickup.lat, pickup.lng);
       } catch {}
     };
     checkActive();
@@ -128,128 +142,87 @@ export default function App() {
     return () => { socket.disconnect(); clearInterval(timer); };
   }, [user, token]);
 
-  const resetRide = () => {
+  const resetToHome = () => {
     setActiveRide(null);
+    setCancelStep(0);
+    setStage('MAIN');
     setDrop(null);
     setDropAddress('');
     setDropQuery('');
     setEstimates([]);
     setRouteCoords([]);
-    setTripMeta(null);
     setDriverLoc(null);
     setPayPin('');
+    loadHistory();
   };
 
   const handleAuth = async () => {
-    if (!phone || !password) return Alert.alert('তথ্য দিন', 'মোবাইল নম্বর ও পাসওয়ার্ড লিখুন');
+    if (!phone || !password) return Alert.alert('তথ্য দিন', 'মোবাইল নম্বর ও পাসওয়ার্ড দিন');
     setLoading(true);
     try {
-      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-      const res = await axios.post(`${API}${endpoint}`, { name: name || 'যাত্রী', phone, password, role: 'RIDER' });
+      const ep = isRegister ? '/api/auth/register' : '/api/auth/login';
+      const res = await axios.post(`${API}${ep}`, { name: name || 'Rider', phone, password, role: 'RIDER' });
       setUser(res.data.user);
       setToken(res.data.token);
-    } catch (err) {
-      Alert.alert('ব্যর্থ', err.response?.data?.error || 'লগইন করা যায়নি');
-    }
-    setLoading(false);
-  };
-
-  const openProfile = () => {
-    setEditName(user.name || '');
-    setEditPhone(user.phone || '');
-    setEditBkash(user.bkash_number || '');
-    setEditNagad(user.nagad_number || '');
-    setEditAvatar(user.avatar_url || null);
-    setProfileOpen(true);
-  };
-
-  const pickImage = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.25, base64: true
-    });
-    if (!res.canceled && res.assets[0]?.base64) {
-      setEditAvatar(`data:image/jpeg;base64,${res.assets[0].base64}`);
-    }
-  };
-
-  const saveProfile = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.put(`${API}/api/auth/profile`, {
-        name: editName, phone: editPhone, avatar_url: editAvatar, bkash_number: editBkash, nagad_number: editNagad
-      }, { headers: { Authorization: `Bearer ${token}` } });
-      setUser({ ...user, ...res.data.user });
-      setProfileOpen(false);
-      Alert.alert('সফল ✅', 'আপনার প্রোফাইল আপডেট হয়েছে!');
-    } catch (err) {
-      Alert.alert('ব্যর্থ', err.response?.data?.error || 'আপডেট করা যায়নি');
-    }
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'সার্ভারে সংযোগ হয়নি'); }
     setLoading(false);
   };
 
   const searchPlace = async (text, field) => {
     setActiveField(field);
-    if (field === 'PICKUP') setPickupQuery(text);
-    else setDropQuery(text);
-
+    if (field === 'PICKUP') setPickupQuery(text); else setDropQuery(text);
     if (text.length < 3) return setSearchResults([]);
     try {
-      const res = await axios.get(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=4&lat=${pickup.lat}&lon=${pickup.lng}`);
+      const res = await axios.get(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=5&lat=${pickup.lat}&lon=${pickup.lng}`);
       setSearchResults(res.data.features || []);
     } catch {}
   };
 
-  const fetchEstimate = async (pCoords, dCoords, code = promoCode) => {
-    if (!pCoords || !dCoords) return;
+  const openChooseRide = async (pCoords, dCoords, dLabel, vType = selectedVehicle) => {
+    setDrop(dCoords);
+    setDropAddress(dLabel);
+    setDropQuery(dLabel);
+    setSelectedVehicle(vType);
+    setStage('CHOOSE');
     setLoading(true);
     try {
       const res = await axios.post(`${API}/api/rides/estimate`, {
         pickup_lat: pCoords.lat, pickup_lng: pCoords.lng,
-        drop_lat: dCoords.lat, drop_lng: dCoords.lng, promo_code: code
+        drop_lat: dCoords.lat, drop_lng: dCoords.lng, promo_code: promoCode
       });
       setRouteCoords(res.data.route_coords);
       setTripMeta({ km: res.data.distance_km, min: res.data.duration_min, promoValid: res.data.promo_valid });
       setEstimates(res.data.estimates);
-    } catch { Alert.alert('সমস্যা', 'ভাড়া হিসাব করা যায়নি'); }
+      loadNearby(pCoords.lat, pCoords.lng);
+    } catch { Alert.alert('Error', 'রুট লোড হয়নি'); }
     setLoading(false);
   };
 
-  const handleMapTap = (coords) => {
-    setSearchResults([]);
-    if (activeField === 'PICKUP') {
-      setPickup(coords);
-      reverseGeocode(coords.lat, coords.lng, (addr) => { setPickupAddress(addr); setPickupQuery(addr); });
-      if (drop) fetchEstimate(coords, drop);
-      setActiveField('DROP');
-    } else {
-      setDrop(coords);
-      reverseGeocode(coords.lat, coords.lng, (addr) => { setDropAddress(addr); setDropQuery(addr); });
-      fetchEstimate(pickup, coords);
-    }
-  };
-
-  const bookRide = async () => {
+  const confirmAndRequestRide = async () => {
+    const finalPickup = centerTemp || pickup;
     const chosen = estimates.find((e) => e.vehicle_type === selectedVehicle);
+    setPickup(finalPickup);
     setLoading(true);
     try {
       const res = await axios.post(`${API}/api/rides/request`, {
         vehicle_type: selectedVehicle,
-        pickup_lat: pickup.lat, pickup_lng: pickup.lng, pickup_address: pickupAddress,
+        pickup_lat: finalPickup.lat, pickup_lng: finalPickup.lng, pickup_address: pickupAddress,
         drop_lat: drop.lat, drop_lng: drop.lng, drop_address: dropAddress,
         estimated_fare: chosen?.estimated_fare || 0, payment_method: paymentMethod, promo_code: promoCode
       }, { headers: { Authorization: `Bearer ${token}` } });
       setActiveRide(res.data.ride);
-    } catch (err) { Alert.alert('সমস্যা', err.response?.data?.error || 'রাইড পাঠানো যায়নি'); }
+      setStage('ACTIVE');
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'রাইড পাঠানো যায়নি'); }
     setLoading(false);
   };
 
-  const cancelRide = async () => {
+  const cancelWithReason = async (reason) => {
     if (!activeRide) return;
     setLoading(true);
     try {
-      await axios.post(`${API}/api/rides/${activeRide.id}/cancel`, {}, { headers: { Authorization: `Bearer ${token}` } });
-      resetRide();
-    } catch (err) { Alert.alert('ব্যর্থ', err.response?.data?.error || 'বাতিল করা যায়নি'); }
+      await axios.post(`${API}/api/rides/${activeRide.id}/cancel`, { reason }, { headers: { Authorization: `Bearer ${token}` } });
+      resetToHome();
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'বাতিল করা যায়নি'); }
     setLoading(false);
   };
 
@@ -260,377 +233,627 @@ export default function App() {
       const res = await axios.post(`${API}/api/rides/${activeRide.id}/pay`, {
         method: activeRide.payment_method, trx_id: 'TRX' + Math.floor(100000 + Math.random() * 900000)
       }, { headers: { Authorization: `Bearer ${token}` } });
-      Alert.alert('পেমেন্ট সফল 🎉', res.data.message);
-      resetRide();
-    } catch (err) { Alert.alert('সমস্যা', err.response?.data?.error || 'পেমেন্ট হয়নি'); }
+      Alert.alert('Payment Successful 🎉', res.data.message);
+      resetToHome();
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'পেমেন্ট হয়নি'); }
     setLoading(false);
   };
 
+  // ================= WELCOME / LOGIN SCREEN =================
   if (!user) {
     return (
-      <View style={styles.authContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
-        <View style={styles.logoBadge}><Text style={{ fontSize: 32 }}>🚕</Text></View>
-        <Text style={styles.brand}>Uber BD</Text>
-        <Text style={styles.subBrand}>স্মার্ট রাইড শেয়ারিং • বাংলাদেশ</Text>
-
-        <View style={styles.authCard}>
-          {isRegister && (
-            <TextInput style={styles.authInput} placeholder="আপনার পূর্ণ নাম" placeholderTextColor="#94a3b8" value={name} onChangeText={setName} />
-          )}
-          <TextInput style={styles.authInput} placeholder="মোবাইল নম্বর (017...)" placeholderTextColor="#94a3b8" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-          <TextInput style={styles.authInput} placeholder="পাসওয়ার্ড" placeholderTextColor="#94a3b8" secureTextEntry value={password} onChangeText={setPassword} />
-
-          <TouchableOpacity style={styles.uberBlackBtn} onPress={handleAuth} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.uberBlackBtnText}>{isRegister ? 'নতুন একাউন্ট খুলুন' : 'লগইন করুন'}</Text>}
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setIsRegister(!isRegister)} style={{ marginTop: 16 }}>
-            <Text style={styles.switchText}>{isRegister ? 'আগে থেকেই একাউন্ট আছে? লগইন করুন' : 'নতুন যাত্রী? এখানে রেজিস্ট্রেশন করুন'}</Text>
-          </TouchableOpacity>
+      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.welcomeBanner}>
+          <View style={styles.welcomeCarBox}>
+            <Ionicons name="location" size={38} color="#dc2626" style={{ alignSelf: 'center', marginBottom: 8 }} />
+            <View style={{ width: 70, height: 4, backgroundColor: '#000', transform: [{ rotate: '-18deg' }] }} />
+            <Ionicons name="car-sport" size={44} color="#0f172a" style={{ marginTop: 10 }} />
+          </View>
         </View>
+        <ScrollView style={{ padding: 24 }}>
+          <Text style={{ fontSize: 28, fontWeight: '800', color: '#000', marginBottom: 16 }}>Welcome to Uber BD</Text>
+          {isRegister && (
+            <TextInput style={styles.authInput} placeholder="আপনার নাম (Full Name)" value={name} onChangeText={setName} />
+          )}
+          <View style={styles.phoneRow}>
+            <View style={styles.flagBox}><Text style={{ fontSize: 18 }}>🇧🇩 +880</Text></View>
+            <TextInput style={[styles.authInput, { flex: 1, marginBottom: 0 }]} placeholder="Mobile number (017...)" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+          </View>
+          <TextInput style={[styles.authInput, { marginTop: 12 }]} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+
+          <TouchableOpacity style={styles.blackBtn} onPress={handleAuth} disabled={loading}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.blackBtnTxt}>{isRegister ? 'Create Account' : 'Continue'}</Text>}
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setIsRegister(!isRegister)} style={{ marginTop: 18, alignItems: 'center' }}>
+            <Text style={{ color: '#0284c7', fontWeight: '700', fontSize: 14 }}>
+              {isRegister ? 'Already have an account? Sign in' : 'New to Uber BD? Create an account'}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
     );
   }
 
-  const displayFare = activeRide
-    ? (Number(activeRide.final_fare) > 0 ? activeRide.final_fare : activeRide.estimated_fare)
-    : 0;
+  const displayFare = activeRide ? (Number(activeRide.final_fare) > 0 ? activeRide.final_fare : activeRide.estimated_fare) : 0;
+  const pendingUnpaid = history.find((h) => h.status === 'COMPLETED' && h.payment_status === 'PENDING');
 
-  return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+  // ================= PLAN YOUR RIDE SCREEN =================
+  if (stage === 'PLAN') {
+    return (
+      <View style={[styles.fullWhite, { paddingTop: TOP_PAD }]}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.planHeader}>
+          <TouchableOpacity onPress={() => setStage('MAIN')}><Ionicons name="arrow-back" size={26} color="#000" /></TouchableOpacity>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: '#000' }}>Plan your ride</Text>
+          <View style={{ width: 26 }} />
+        </View>
 
-      <LeafletMap
-        pickup={pickup}
-        drop={drop}
-        driverLoc={driverLoc}
-        routeCoords={routeCoords}
-        recenterCount={recenterCount}
-        onMapPress={handleMapTap}
-      />
+        <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 18, marginBottom: 12 }}>
+          <View style={styles.smallChip}><Ionicons name="time" size={14} color="#000" /><Text style={styles.smallChipTxt}>Pickup now</Text></View>
+          <View style={styles.smallChip}><Ionicons name="person" size={14} color="#000" /><Text style={styles.smallChipTxt}>For me</Text></View>
+        </View>
 
-      {/* Top Floating Pills */}
-      <View style={[styles.floatingTop, { top: TOP_PAD }]}>
-        <TouchableOpacity style={styles.pillBtn} onPress={openProfile}>
-          {user.avatar_url ? (
-            <Image source={{ uri: user.avatar_url }} style={styles.miniAvatar} />
-          ) : (
-            <Text style={{ fontSize: 16 }}>👤</Text>
-          )}
-          <Text style={styles.pillText}>{user.name}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.circleBtn} onPress={handleRecenter}>
-          <Text style={{ fontSize: 20 }}>🎯</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Bottom Sheet */}
-      <View style={styles.sheet}>
-        <View style={styles.handle} />
-
-        {activeRide ? (
-          <View style={{ gap: 10 }}>
-            {activeRide.status === 'SEARCHING' && <SearchingRadar />}
-
-            <View style={styles.statusHeader}>
-              <Text style={styles.statusTitle}>
-                {activeRide.status === 'SEARCHING' && 'কাছাকাছি ড্রাইভার খোঁজা হচ্ছে...'}
-                {activeRide.status === 'ACCEPTED' && '✅ ড্রাইভার আসছেন!'}
-                {activeRide.status === 'STARTED' && '🛣️ ট্রিপ চলছে (লাইভ GPS)'}
-                {activeRide.status === 'COMPLETED' && '🏁 ট্রিপ সম্পন্ন হয়েছে'}
-              </Text>
-              <Text style={styles.statusSub}>
-                পেমেন্ট: {activeRide.payment_method} • ভাড়া: <Text style={{ color: '#059669', fontWeight: '800' }}>৳{displayFare}</Text>
-              </Text>
-              <Text style={styles.routeSummary} numberOfLines={1}>
-                🟢 {activeRide.pickup_address} → 📍 {activeRide.drop_address}
-              </Text>
-            </View>
-
-            {activeRide.driver_name && (
-              <View style={styles.driverBox}>
-                <View style={styles.driverAvatar}><Text style={{ fontSize: 22 }}>👨‍✈️</Text></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.driverName}>{activeRide.driver_name} ⭐ 4.9</Text>
-                  <Text style={styles.driverMeta}>{activeRide.vehicle_type} • {activeRide.plate_number || 'DHAKA'} • 📞 {activeRide.driver_phone}</Text>
-                </View>
-              </View>
-            )}
-
-            {activeRide.status === 'COMPLETED' ? (
-              <View style={styles.receiptCard}>
-                <Text style={styles.receiptAmt}>৳ {displayFare}</Text>
-                <Text style={styles.receiptInfo}>চলা দূরত্ব: {activeRide.actual_distance_km} কিমি • সময়: {activeRide.actual_duration_min} মিনিট</Text>
-                {Number(activeRide.promo_discount) > 0 && <Text style={{ color: '#059669', fontSize: 12, textAlign: 'center', fontWeight: '600' }}>প্রমো ছাড়: -৳{activeRide.promo_discount}</Text>}
-
-                {activeRide.payment_method === 'CASH' || activeRide.payment_status === 'PAID' ? (
-                  <TouchableOpacity style={styles.uberBlackBtn} onPress={resetRide}>
-                    <Text style={styles.uberBlackBtnText}>সম্পন্ন • নতুন রাইড নিন</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={{ gap: 8, marginTop: 6 }}>
-                    <Text style={{ fontSize: 12, color: '#475569', textAlign: 'center' }}>
-                      নম্বর: {activeRide.payment_method === 'BKASH' ? (user.bkash_number || user.phone) : (user.nagad_number || user.phone)}
-                    </Text>
-                    <TextInput style={styles.lightInput} placeholder={`${activeRide.payment_method} পিন দিন (টেস্ট: 1234)`} placeholderTextColor="#64748b" secureTextEntry value={payPin} onChangeText={setPayPin} />
-                    <TouchableOpacity style={[styles.uberBlackBtn, { backgroundColor: activeRide.payment_method === 'BKASH' ? '#e2136e' : '#ea580c' }]} onPress={confirmDigitalPayment}>
-                      <Text style={styles.uberBlackBtnText}>{activeRide.payment_method}-এ ৳{displayFare} পে করুন</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ) : (
-              (activeRide.status === 'SEARCHING' || activeRide.status === 'ACCEPTED') && (
-                <TouchableOpacity style={styles.cancelBtn} onPress={cancelRide} disabled={loading}>
-                  <Text style={styles.cancelBtnText}>✕ রাইড বাতিল করুন (Cancel)</Text>
-                </TouchableOpacity>
-              )
-            )}
+        <View style={styles.planInputBox}>
+          <View style={styles.planRow}>
+            <View style={styles.dotBlack} />
+            <TextInput style={styles.planInput} value={pickupQuery} onFocus={() => setActiveField('PICKUP')} onChangeText={(t) => searchPlace(t, 'PICKUP')} placeholder="Pickup location" />
           </View>
-        ) : (
-          <ScrollView style={{ maxHeight: 390 }} showsVerticalScrollIndicator={false}>
-            {/* Mode Indicator */}
-            <View style={styles.modeRow}>
-              <TouchableOpacity onPress={() => setActiveField('PICKUP')} style={[styles.modePill, activeField === 'PICKUP' && styles.modePillActive]}>
-                <Text style={[styles.modeText, activeField === 'PICKUP' && { color: '#fff' }]}>🟢 পিকআপ সেট করুন</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setActiveField('DROP')} style={[styles.modePill, activeField === 'DROP' && styles.modePillActive]}>
-                <Text style={[styles.modeText, activeField === 'DROP' && { color: '#fff' }]}>📍 গন্তব্য সেট করুন</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Editable Pickup & Drop Box */}
-            <View style={styles.routeBox}>
-              <View style={styles.routeLineRow}>
-                <View style={styles.greenDot} />
-                <TextInput
-                  style={styles.whereInput}
-                  placeholder="পিকআপ ঠিকানা (লিখুন বা ম্যাপে ট্যাপ করুন)"
-                  placeholderTextColor="#64748b"
-                  value={pickupQuery}
-                  onFocus={() => setActiveField('PICKUP')}
-                  onChangeText={(t) => searchPlace(t, 'PICKUP')}
-                />
-              </View>
-              <View style={styles.routeDivider} />
-              <View style={styles.routeLineRow}>
-                <View style={styles.blackSquare} />
-                <TextInput
-                  style={styles.whereInput}
-                  placeholder="কোথায় যাবেন? (লিখুন বা ম্যাপে ট্যাপ করুন)"
-                  placeholderTextColor="#64748b"
-                  value={dropQuery}
-                  onFocus={() => setActiveField('DROP')}
-                  onChangeText={(t) => searchPlace(t, 'DROP')}
-                />
-              </View>
-            </View>
-
-            {searchResults.map((item, idx) => (
-              <TouchableOpacity
-                key={idx} style={styles.searchItem}
-                onPress={() => {
-                  const [lng, lat] = item.geometry.coordinates;
-                  const title = [item.properties.name, item.properties.city].filter(Boolean).join(', ') || 'সিলেক্টেড জায়গা';
-                  setSearchResults([]);
-                  if (activeField === 'PICKUP') {
-                    setPickup({ lat, lng });
-                    setPickupAddress(title);
-                    setPickupQuery(title);
-                    if (drop) fetchEstimate({ lat, lng }, drop);
-                    setActiveField('DROP');
-                  } else {
-                    setDrop({ lat, lng });
-                    setDropAddress(title);
-                    setDropQuery(title);
-                    fetchEstimate(pickup, { lat, lng });
-                  }
-                }}
-              >
-                <Text style={{ color: '#0f172a', fontSize: 13, fontWeight: '500' }}>📍 {item.properties.name} {item.properties.city || ''}</Text>
-              </TouchableOpacity>
-            ))}
-
-            {tripMeta && (
-              <View style={styles.metaBadge}>
-                <Text style={styles.metaText}>🛣️ {tripMeta.km} কিমি • ⏱️ ~{tripMeta.min} মিনিট {tripMeta.promoValid ? '• 🎉 প্রমো প্রযোজ্য' : ''}</Text>
-              </View>
-            )}
-
-            {estimates.length > 0 && (
-              <>
-                <View style={{ gap: 8, marginVertical: 8 }}>
-                  {estimates.map((est) => {
-                    const active = selectedVehicle === est.vehicle_type;
-                    const icon = est.vehicle_type === 'BIKE' ? '🏍️' : est.vehicle_type === 'CNG' ? '🛺' : '🚗';
-                    const title = est.vehicle_type === 'BIKE' ? 'Uber Moto (বাইক)' : est.vehicle_type === 'CNG' ? 'Uber CNG (অটো)' : 'UberX (প্রাইভেট কার)';
-                    const cap = est.vehicle_type === 'BIKE' ? '১ জন • দ্রুততম' : est.vehicle_type === 'CNG' ? '৩ জন • আরামদায়ক' : '৪ জন • এসি কার';
-                    return (
-                      <TouchableOpacity key={est.vehicle_type} onPress={() => setSelectedVehicle(est.vehicle_type)} style={[styles.rideRow, active && styles.rideRowActive]}>
-                        <Text style={{ fontSize: 28 }}>{icon}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.rideTitle}>{title}</Text>
-                          <Text style={styles.rideSub}>{cap}</Text>
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={styles.ridePrice}>৳{est.estimated_fare}</Text>
-                          {est.discount > 0 && <Text style={styles.strikePrice}>৳{est.original_fare}</Text>}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <View style={styles.promoRow}>
-                  <TextInput style={styles.promoInput} placeholder="প্রমো কোড (যেমন EID50)" placeholderTextColor="#64748b" value={promoCode} onChangeText={setPromoCode} />
-                  <TouchableOpacity style={styles.promoBtn} onPress={() => fetchEstimate(pickup, drop, promoCode)}>
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Apply</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.payRow}>
-                  {['CASH', 'BKASH', 'NAGAD'].map((m) => (
-                    <TouchableOpacity key={m} onPress={() => setPaymentMethod(m)} style={[styles.payPill, paymentMethod === m && styles.payPillActive]}>
-                      <Text style={{ color: paymentMethod === m ? '#fff' : '#334155', fontWeight: '700', fontSize: 12 }}>
-                        {m === 'CASH' ? '💵 Cash' : m === 'BKASH' ? '🩷 bKash' : '🟠 Nagad'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <TouchableOpacity style={styles.uberBlackBtn} onPress={bookRide} disabled={loading}>
-                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.uberBlackBtnText}>রাইড কনফার্ম করুন ({selectedVehicle})</Text>}
-                </TouchableOpacity>
-              </>
-            )}
-          </ScrollView>
-        )}
-      </View>
-
-      {/* FULL PROFILE MODAL */}
-      <Modal visible={profileOpen} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>আমার প্রোফাইল ও পেমেন্ট</Text>
-                <TouchableOpacity onPress={() => setProfileOpen(false)}><Text style={{ fontSize: 20, color: '#64748b' }}>✕</Text></TouchableOpacity>
-              </View>
-
-              <TouchableOpacity onPress={pickImage} style={{ alignItems: 'center', marginBottom: 16 }}>
-                {editAvatar ? (
-                  <Image source={{ uri: editAvatar }} style={styles.bigAvatar} />
-                ) : (
-                  <View style={[styles.bigAvatar, { backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' }]}>
-                    <Text style={{ fontSize: 36 }}>👤</Text>
-                  </View>
-                )}
-                <Text style={{ color: '#059669', fontWeight: '700', fontSize: 13, marginTop: 6 }}>📷 ছবি পরিবর্তন করুন</Text>
-              </TouchableOpacity>
-
-              <Text style={styles.fieldLabel}>আপনার নাম</Text>
-              <TextInput style={styles.lightInput} value={editName} onChangeText={setEditName} placeholder="নাম" />
-
-              <Text style={styles.fieldLabel}>মোবাইল নম্বর</Text>
-              <TextInput style={styles.lightInput} value={editPhone} onChangeText={setEditPhone} keyboardType="phone-pad" placeholder="017..." />
-
-              <Text style={styles.fieldLabel}>🩷 সেভ করা বিকাশ (bKash) নম্বর</Text>
-              <TextInput style={styles.lightInput} value={editBkash} onChangeText={setEditBkash} keyboardType="phone-pad" placeholder="017XXXXXXXX" />
-
-              <Text style={styles.fieldLabel}>🟠 সেভ করা নগদ (Nagad) নম্বর</Text>
-              <TextInput style={styles.lightInput} value={editNagad} onChangeText={setEditNagad} keyboardType="phone-pad" placeholder="018XXXXXXXX" />
-
-              <TouchableOpacity style={[styles.uberBlackBtn, { marginTop: 14 }]} onPress={saveProfile} disabled={loading}>
-                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.uberBlackBtnText}>প্রোফাইল সেভ করুন</Text>}
-              </TouchableOpacity>
-
-              <TouchableOpacity style={[styles.cancelBtn, { marginTop: 10 }]} onPress={() => { setProfileOpen(false); setUser(null); setToken(''); }}>
-                <Text style={styles.cancelBtnText}>লগআউট করুন</Text>
-              </TouchableOpacity>
-            </ScrollView>
+          <View style={{ height: 1, backgroundColor: '#e2e8f0', marginLeft: 24, marginVertical: 6 }} />
+          <View style={styles.planRow}>
+            <View style={styles.sqBlack} />
+            <TextInput style={styles.planInput} value={dropQuery} onFocus={() => setActiveField('DROP')} onChangeText={(t) => searchPlace(t, 'DROP')} placeholder="Where to?" autoFocus />
           </View>
         </View>
-      </Modal>
+
+        <ScrollView style={{ flex: 1, paddingHorizontal: 18, marginTop: 10 }}>
+          {searchResults.map((item, i) => {
+            const [lng, lat] = item.geometry.coordinates;
+            const title = item.properties.name || item.properties.city || 'Selected place';
+            const sub = [item.properties.street, item.properties.district, item.properties.city].filter(Boolean).join(', ');
+            return (
+              <TouchableOpacity key={i} style={styles.placeRow} onPress={() => {
+                setSearchResults([]);
+                if (activeField === 'PICKUP') {
+                  setPickup({ lat, lng }); setPickupAddress(title); setPickupQuery(title); setActiveField('DROP');
+                } else {
+                  openChooseRide(pickup, { lat, lng }, title);
+                }
+              }}>
+                <View style={styles.placeIcon}><Ionicons name="location" size={18} color="#000" /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', color: '#000', fontSize: 15 }}>{title}</Text>
+                  <Text style={{ color: '#64748b', fontSize: 12 }}>{sub || 'Dhaka, Bangladesh'}</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600' }}>{calcKm(pickup.lat, pickup.lng, lat, lng)} km</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {searchResults.length === 0 && (
+            <>
+              <Text style={{ fontWeight: '700', color: '#64748b', fontSize: 12, marginVertical: 8 }}>জনপ্রিয় গন্তব্য (Quick Select)</Text>
+              {[
+                { t: 'Mirpur 10 Metro Station', lat: 23.8069, lng: 90.3687 },
+                { t: 'Uttara North Metro', lat: 23.8691, lng: 90.3676 },
+                { t: 'Hazrat Shahjalal Airport', lat: 23.8433, lng: 90.3978 },
+                { t: 'Gulshan 2 Circle', lat: 23.7946, lng: 90.4143 }
+              ].map((q) => (
+                <TouchableOpacity key={q.t} style={styles.placeRow} onPress={() => openChooseRide(pickup, { lat: q.lat, lng: q.lng }, q.t)}>
+                  <View style={styles.placeIcon}><Ionicons name="time" size={18} color="#000" /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '700', color: '#000', fontSize: 15 }}>{q.t}</Text>
+                    <Text style={{ color: '#64748b', fontSize: 12 }}>Dhaka • {calcKm(pickup.lat, pickup.lng, q.lat, q.lng)} km দূরে</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </>
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // ================= MAP STAGES (CHOOSE / CONFIRM_PICKUP / ACTIVE) =================
+  if (stage === 'CHOOSE' || stage === 'CONFIRM_PICKUP' || (stage === 'ACTIVE' && activeRide)) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+        <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+
+        <LeafletMap
+          pickup={pickup}
+          drop={drop}
+          driverLoc={driverLoc}
+          nearbyDrivers={nearbyDrivers}
+          routeCoords={routeCoords}
+          recenterCount={recenterCount}
+          confirmMode={stage === 'CONFIRM_PICKUP'}
+          etaText={tripMeta ? `${tripMeta.min} min` : ''}
+          onCenterChange={(c) => { if (stage === 'CONFIRM_PICKUP') { setCenterTemp(c); reverseGeo(c.lat, c.lng, setPickupAddress); } }}
+        />
+
+        {/* Floating Top Controls */}
+        <View style={[styles.mapTopBar, { top: TOP_PAD }]}>
+          <TouchableOpacity style={styles.roundBtn} onPress={() => {
+            if (stage === 'CONFIRM_PICKUP') setStage('CHOOSE');
+            else if (stage === 'CHOOSE') setStage('PLAN');
+            else setStage('MAIN');
+          }}>
+            <Ionicons name="arrow-back" size={22} color="#000" />
+          </TouchableOpacity>
+
+          {stage === 'CHOOSE' && (
+            <TouchableOpacity style={styles.topRoutePill} onPress={() => setStage('PLAN')}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#000' }} numberOfLines={1}>● {pickupAddress} → {dropAddress}</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.roundBtn} onPress={() => { fetchGPS(); setRecenterCount((c) => c + 1); }}>
+            <Ionicons name="locate" size={22} color="#000" />
+          </TouchableOpacity>
+        </View>
+
+        {/* BOTTOM SHEET: CHOOSE A RIDE */}
+        {stage === 'CHOOSE' && (
+          <View style={styles.uberSheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Choose a ride</Text>
+
+            <ScrollView style={{ maxHeight: 270 }} showsVerticalScrollIndicator={false}>
+              {estimates.map((est) => {
+                const active = selectedVehicle === est.vehicle_type;
+                const meta = est.vehicle_type === 'CAR'
+                  ? { name: 'UberX', desc: 'Affordable compact AC rides • 4', icon: 'car-sport', badge: '⚡ Faster' }
+                  : est.vehicle_type === 'CNG'
+                  ? { name: 'CNG', desc: 'CNG rides at your doorstep • 3', icon: 'car', badge: null }
+                  : { name: 'Bike', desc: 'Affordable bike rides • 1', icon: 'bicycle', badge: null };
+                return (
+                  <TouchableOpacity key={est.vehicle_type} onPress={() => setSelectedVehicle(est.vehicle_type)} style={[styles.rideOption, active && styles.rideOptionActive]}>
+                    <View style={styles.vehicleImgBox}><Ionicons name={meta.icon} size={30} color="#000" /></View>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>{meta.name}</Text>
+                        {meta.badge && <Text style={styles.fasterBadge}>{meta.badge}</Text>}
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>{tripMeta?.min || 5} min away • {meta.desc}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>BDT {est.estimated_fare}</Text>
+                      {est.discount > 0 && <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through' }}>BDT {est.original_fare}</Text>}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity style={styles.payBar} onPress={() => setModalMode('PAY_WITH')}>
+              <Ionicons name={paymentMethod === 'CASH' ? 'cash' : 'wallet'} size={20} color={paymentMethod === 'BKASH' ? '#e2136e' : paymentMethod === 'NAGAD' ? '#ea580c' : '#16a34a'} />
+              <Text style={{ flex: 1, fontWeight: '700', color: '#000', fontSize: 14 }}>
+                {paymentMethod} {promoCode ? `• 🎟️ ${promoCode}` : ''}
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color="#64748b" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.blackBtn} onPress={() => { setCenterTemp(pickup); setStage('CONFIRM_PICKUP'); }}>
+              <Text style={styles.blackBtnTxt}>Choose {selectedVehicle === 'CAR' ? 'UberX' : selectedVehicle}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* BOTTOM SHEET: CONFIRM PICKUP SPOT */}
+        {stage === 'CONFIRM_PICKUP' && (
+          <View style={styles.uberSheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Confirm the pickup spot</Text>
+            <Text style={{ textAlign: 'center', color: '#64748b', fontSize: 13, marginBottom: 12 }}>{pickupAddress}</Text>
+            <View style={[styles.rideOption, styles.rideOptionActive, { marginBottom: 14 }]}>
+              <Ionicons name="pin" size={20} color="#000" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '700', color: '#000' }}>Near {pickupAddress} - Spot 1</Text>
+                <Text style={{ fontSize: 11, color: '#64748b' }}>ম্যাপ সরিয়ে সঠিক পিকআপ স্পট ঠিক করুন</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.blackBtn} onPress={confirmAndRequestRide} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.blackBtnTxt}>Confirm pickup</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* BOTTOM SHEET: ACTIVE RIDE */}
+        {stage === 'ACTIVE' && activeRide && (
+          <View style={styles.uberSheet}>
+            <View style={styles.sheetHandle} />
+
+            {activeRide.status === 'SEARCHING' && (
+              <View style={{ gap: 10 }}>
+                <Text style={{ fontSize: 20, fontWeight: '800', textAlign: 'center', color: '#000' }}>Ride requested</Text>
+                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>Finding drivers nearby • {activeRide.vehicle_type} • BDT {displayFare}</Text>
+                <ProgressBar />
+                <View style={styles.detailBox}>
+                  <Text style={{ fontWeight: '700', color: '#000' }}>Meet at: {activeRide.pickup_address}</Text>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Payment: {activeRide.payment_method}</Text>
+                </View>
+                <TouchableOpacity style={styles.cancelRedBtn} onPress={() => setCancelStep(1)}>
+                  <Text style={{ color: '#e11d48', fontWeight: '800' }}>Cancel ride</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {(activeRide.status === 'ACCEPTED' || activeRide.status === 'STARTED') && (
+              <View style={{ gap: 12 }}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: '#000' }}>
+                    {activeRide.status === 'ACCEPTED' ? 'Pickup in ~4 min' : 'Trip in progress (Live GPS)'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Meet {activeRide.driver_name} at {activeRide.pickup_address}</Text>
+                </View>
+
+                <TouchableOpacity style={styles.driverStrip} onPress={() => setModalMode('DRIVER_PROFILE')}>
+                  {activeRide.driver_avatar ? (
+                    <Image source={{ uri: activeRide.driver_avatar }} style={styles.drvImg} />
+                  ) : (
+                    <View style={styles.drvImgPlaceholder}><Ionicons name="person" size={24} color="#fff" /></View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>{activeRide.driver_name} • ★ {activeRide.driver_rating || '4.9'}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>{activeRide.plate_number || 'DHM-GA-15'}</Text>
+                    <Text style={{ fontSize: 11, color: '#64748b' }}>{activeRide.vehicle_model || activeRide.vehicle_type} (ট্যাপ করে প্রোফাইল দেখুন)</Text>
+                  </View>
+                  <TouchableOpacity style={styles.callCircle} onPress={() => Linking.openURL(`tel:${activeRide.driver_phone}`)}>
+                    <Ionicons name="call" size={20} color="#000" />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity style={[styles.grayPillBtn, { flex: 1 }]} onPress={() => Share.share({ message: `I'm on an Uber BD ride with ${activeRide.driver_name} (${activeRide.plate_number}) to ${activeRide.drop_address}` })}>
+                    <Ionicons name="share-social" size={16} color="#000" /><Text style={{ fontWeight: '700', fontSize: 13 }}>Share trip</Text>
+                  </TouchableOpacity>
+                  {activeRide.status === 'ACCEPTED' && (
+                    <TouchableOpacity style={[styles.cancelRedBtn, { flex: 1 }]} onPress={() => setCancelStep(1)}>
+                      <Text style={{ color: '#e11d48', fontWeight: '800', fontSize: 13 }}>Cancel ride</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {activeRide.status === 'COMPLETED' && (
+              <View style={{ gap: 10 }}>
+                <Text style={{ fontSize: 20, fontWeight: '800', textAlign: 'center', color: '#000' }}>Trip Completed 🏁</Text>
+                <Text style={{ fontSize: 28, fontWeight: '800', textAlign: 'center', color: '#059669' }}>BDT {displayFare}</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center' }}>
+                  Distance: {activeRide.actual_distance_km} km • Time: {activeRide.actual_duration_min} min
+                </Text>
+                {activeRide.payment_method === 'CASH' || activeRide.payment_status === 'PAID' ? (
+                  <TouchableOpacity style={styles.blackBtn} onPress={resetToHome}><Text style={styles.blackBtnTxt}>Done</Text></TouchableOpacity>
+                ) : (
+                  <View style={{ gap: 8 }}>
+                    <TextInput style={styles.authInput} placeholder={`${activeRide.payment_method} পিন দিন (টেস্ট: 1234)`} secureTextEntry value={payPin} onChangeText={setPayPin} />
+                    <TouchableOpacity style={[styles.blackBtn, { backgroundColor: activeRide.payment_method === 'BKASH' ? '#e2136e' : '#ea580c' }]} onPress={confirmDigitalPayment}>
+                      <Text style={styles.blackBtnTxt}>Pay BDT {displayFare} via {activeRide.payment_method}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* CANCEL RIDE MODAL (YES/NO -> REASONS) */}
+        <Modal visible={cancelStep > 0} transparent animationType="slide">
+          <View style={styles.modalBg}>
+            <View style={styles.cancelCard}>
+              {cancelStep === 1 ? (
+                <>
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: '#000', marginBottom: 6 }}>Cancel trip?</Text>
+                  <Text style={{ color: '#64748b', marginBottom: 16 }}>আপনি কি রাইডটি বাতিল করতে চান?</Text>
+                  <TouchableOpacity style={styles.cancelRedBtn} onPress={() => setCancelStep(2)}>
+                    <Text style={{ color: '#e11d48', fontWeight: '800' }}>YES, CANCEL</Text>
+                  </TouchableOpacity>
+                  {activeRide?.driver_phone && (
+                    <TouchableOpacity style={[styles.blackBtn, { marginTop: 10 }]} onPress={() => Linking.openURL(`tel:${activeRide.driver_phone}`)}>
+                      <Text style={styles.blackBtnTxt}>Call Driver</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={{ padding: 14, alignItems: 'center' }} onPress={() => setCancelStep(0)}>
+                    <Text style={{ fontWeight: '800', color: '#000' }}>NO</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 18, fontWeight: '800', color: '#000', marginBottom: 12 }}>Why do you want to cancel?</Text>
+                  {['Wait time was too long', 'Driver asked me to cancel', 'Driver not getting closer', 'Driver arrived early', 'Other'].map((r) => (
+                    <TouchableOpacity key={r} style={styles.reasonRow} onPress={() => cancelWithReason(r)}>
+                      <Ionicons name="alert-circle-outline" size={20} color="#000" />
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#000' }}>{r}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity style={[styles.blackBtn, { marginTop: 12 }]} onPress={() => setCancelStep(0)}>
+                    <Text style={styles.blackBtnTxt}>Keep my ride</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        <AccountModal
+          visible={!!modalMode} mode={modalMode} onClose={() => setModalMode(null)}
+          user={user} token={token} API={API} onUpdateUser={setUser} onLogout={() => { setUser(null); setToken(''); }}
+          paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod}
+          promoCode={promoCode} setPromoCode={(c) => { setPromoCode(c); if (drop) openChooseRide(pickup, drop, dropAddress); }}
+          driverInfo={activeRide}
+        />
+      </View>
+    );
+  }
+
+  // ================= MAIN 4-TAB UBER HOME / SERVICES / ACTIVITY / ACCOUNT =================
+  return (
+    <View style={[styles.fullWhite, { paddingTop: TOP_PAD }]}>
+      <StatusBar barStyle="dark-content" />
+
+      {/* TAB 1: HOME */}
+      {mainTab === 'HOME' && (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 18 }} showsVerticalScrollIndicator={false}>
+          <View style={styles.homeTop}>
+            <TouchableOpacity onPress={fetchGPS} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+              <View style={styles.blueDot} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#000' }} numberOfLines={1}>{pickupAddress}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => Alert.alert('Inbox', 'এই মুহূর্তে কোনো নতুন মেসেজ নেই')} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Ionicons name="notifications-outline" size={20} color="#000" /><Text style={{ fontWeight: '700', fontSize: 13 }}>Inbox</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.uberParcelRow}>
+            <View style={[styles.modeTab, styles.modeTabActive]}><Ionicons name="car" size={22} color="#000" /><Text style={{ fontWeight: '800', fontSize: 16 }}>Uber BD</Text></View>
+            <TouchableOpacity style={styles.modeTab} onPress={() => { setSelectedVehicle('BIKE'); setStage('PLAN'); }}>
+              <Ionicons name="cube" size={20} color="#64748b" /><Text style={{ fontWeight: '700', fontSize: 16, color: '#64748b' }}>Parcel</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* WHERE TO PILL */}
+          <TouchableOpacity style={styles.wherePill} onPress={() => setStage('PLAN')}>
+            <Ionicons name="search" size={22} color="#000" />
+            <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: '#334155' }}>Where to?</Text>
+            <View style={styles.laterPill}><Ionicons name="calendar" size={14} color="#000" /><Text style={{ fontWeight: '700', fontSize: 12 }}>Later</Text></View>
+          </TouchableOpacity>
+
+          {/* RECENT DESTINATIONS */}
+          <View style={styles.recentBox}>
+            {(history.length > 0 ? history.slice(0, 2) : [
+              { id: 'd1', drop_address: 'Mirpur 10 Metro Station', drop_lat: 23.8069, drop_lng: 90.3687 },
+              { id: 'd2', drop_address: 'Hazrat Shahjalal Airport', drop_lat: 23.8433, drop_lng: 90.3978 }
+            ]).map((item) => (
+              <TouchableOpacity key={item.id} style={styles.recentRow} onPress={() => openChooseRide(pickup, { lat: item.drop_lat, lng: item.drop_lng }, item.drop_address)}>
+                <View style={styles.placeIcon}><Ionicons name="time" size={18} color="#000" /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 15, color: '#000' }} numberOfLines={1}>{item.drop_address}</Text>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Dhaka, Bangladesh</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {pendingUnpaid && (
+            <View style={styles.yellowAlert}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '800', fontSize: 16, color: '#000' }}>Complete your BDT {pendingUnpaid.final_fare} payment</Text>
+                <TouchableOpacity style={styles.reviewBtn} onPress={() => { setActiveRide(pendingUnpaid); setStage('ACTIVE'); }}>
+                  <Text style={{ fontWeight: '700', fontSize: 13 }}>Review</Text>
+                </TouchableOpacity>
+              </View>
+              <Ionicons name="notifications" size={44} color="#eab308" />
+            </View>
+          )}
+
+          <View style={styles.promoBanner}>
+            <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800' }}>EID50 প্রমো কোড!</Text>
+            <Text style={{ color: '#cbd5e1', fontSize: 13, marginTop: 4 }}>রাইড বুকিংয়ে ডিসকাউন্ট পেতে প্রমো কোড ব্যবহার করুন</Text>
+            <TouchableOpacity style={[styles.reviewBtn, { marginTop: 12 }]} onPress={() => setStage('PLAN')}>
+              <Text style={{ fontWeight: '800', fontSize: 13 }}>Book a Ride</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* TAB 2: SERVICES */}
+      {mainTab === 'SERVICES' && (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 18 }}>
+          <Text style={styles.pageH1}>Services</Text>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: '#000', marginBottom: 14 }}>Go anywhere, get anything</Text>
+          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+            <TouchableOpacity style={styles.srvBig} onPress={() => { setSelectedVehicle('CAR'); setStage('PLAN'); }}>
+              <Text style={styles.srvBigTxt}>Ride</Text><Ionicons name="car-sport" size={42} color="#000" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.srvBig} onPress={() => { setSelectedVehicle('CNG'); setStage('PLAN'); }}>
+              <Text style={styles.srvBigTxt}>CNG</Text><Ionicons name="car" size={42} color="#16a34a" />
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+            {[
+              { title: 'Bike', icon: 'bicycle', v: 'BIKE' },
+              { title: 'Intercity', icon: 'trail-sign', v: 'CAR' },
+              { title: 'Rentals', icon: 'time', v: 'CAR' },
+              { title: 'Parcel', icon: 'cube', v: 'BIKE', badge: 'Up to 30%' },
+              { title: 'Reserve', icon: 'calendar', v: 'CAR', badge: 'Promo' }
+            ].map((s) => (
+              <TouchableOpacity key={s.title} style={styles.srvSmall} onPress={() => { setSelectedVehicle(s.v); setStage('PLAN'); }}>
+                {s.badge && <View style={styles.srvBadge}><Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{s.badge}</Text></View>}
+                <Ionicons name={s.icon} size={28} color="#000" />
+                <Text style={{ fontWeight: '700', fontSize: 12, color: '#000', marginTop: 6 }}>{s.title}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+      )}
+
+      {/* TAB 3: ACTIVITY */}
+      {mainTab === 'ACTIVITY' && (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 18 }}>
+          <Text style={styles.pageH1}>Activity</Text>
+          <Text style={{ fontSize: 16, fontWeight: '800', color: '#000', marginBottom: 12 }}>Past</Text>
+          {history.map((h) => (
+            <View key={h.id} style={styles.actCard}>
+              <View style={styles.placeIcon}><Ionicons name={h.vehicle_type === 'BIKE' ? 'bicycle' : 'car-sport'} size={22} color="#000" /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '800', fontSize: 15, color: '#000' }}>{h.drop_address}</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{new Date(h.created_at).toLocaleDateString()} • BDT {h.final_fare || h.estimated_fare} • {h.status}</Text>
+                <TouchableOpacity style={styles.rebookBtn} onPress={() => openChooseRide(pickup, { lat: h.drop_lat, lng: h.drop_lng }, h.drop_address, h.vehicle_type)}>
+                  <Ionicons name="refresh" size={14} color="#000" /><Text style={{ fontWeight: '700', fontSize: 12 }}>Rebook</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+          {history.length === 0 && <Text style={{ color: '#64748b' }}>এখনো কোনো রাইড হিস্ট্রি নেই।</Text>}
+        </ScrollView>
+      )}
+
+      {/* TAB 4: ACCOUNT */}
+      {mainTab === 'ACCOUNT' && (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 18 }}>
+          <TouchableOpacity style={styles.accHeader} onPress={() => setModalMode('ACCOUNT')}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 28, fontWeight: '800', color: '#000' }}>{user.name}</Text>
+              <View style={styles.ratingPill}><Ionicons name="star" size={13} color="#000" /><Text style={{ fontWeight: '700', fontSize: 12 }}>5.0</Text></View>
+            </View>
+            {user.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: 64, height: 64, borderRadius: 32 }} />
+              : <View style={styles.accAvatar}><Ionicons name="person" size={32} color="#fff" /></View>}
+          </TouchableOpacity>
+
+          <View style={{ flexDirection: 'row', gap: 10, marginVertical: 16 }}>
+            {[
+              { t: 'Help', i: 'help-buoy', fn: () => Alert.alert('Help', 'সাপোর্ট নম্বর: 01700000000') },
+              { t: 'Wallet', i: 'wallet', fn: () => setModalMode('WALLET') },
+              { t: 'Safety', i: 'shield-checkmark', fn: () => Alert.alert('Safety', 'যেকোনো জরুরি অবস্থায় 999 কল করুন') },
+              { t: 'Account', i: 'settings', fn: () => setModalMode('ACCOUNT') }
+            ].map((b) => (
+              <TouchableOpacity key={b.t} style={styles.accTile} onPress={b.fn}>
+                <Ionicons name={b.i} size={22} color="#000" /><Text style={{ fontWeight: '700', fontSize: 12, marginTop: 4 }}>{b.t}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity style={styles.infoCard} onPress={() => setModalMode('WALLET')}>
+            <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 15 }}>Promo & Vouchers</Text><Text style={{ fontSize: 12, color: '#64748b' }}>EID50 বা অন্য প্রমো কোড যোগ করুন</Text></View>
+            <Ionicons name="pricetag" size={26} color="#7c3aed" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.infoCard} onPress={() => setModalMode('ACCOUNT')}>
+            <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 15 }}>Profile, bKash & Nagad Setup</Text><Text style={{ fontSize: 12, color: '#64748b' }}>ছবি, নাম, ইমেইল ও পেমেন্ট নম্বর এডিট করুন</Text></View>
+            <Ionicons name="person-circle" size={28} color="#0284c7" />
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
+      {/* FLOATING 4-TAB BOTTOM NAVIGATION */}
+      <View style={styles.floatNav}>
+        {[
+          { k: 'HOME', lbl: 'Home', icon: 'home' },
+          { k: 'SERVICES', lbl: 'Services', icon: 'grid' },
+          { k: 'ACTIVITY', lbl: 'Activity', icon: 'receipt' },
+          { k: 'ACCOUNT', lbl: 'Account', icon: 'person' }
+        ].map((t) => {
+          const active = mainTab === t.k;
+          return (
+            <TouchableOpacity key={t.k} style={[styles.navTab, active && styles.navTabActive]} onPress={() => { setMainTab(t.k); if (t.k === 'ACTIVITY') loadHistory(); }}>
+              <Ionicons name={active ? t.icon : `${t.icon}-outline`} size={20} color={active ? '#000' : '#64748b'} />
+              <Text style={{ fontSize: 11, fontWeight: active ? '800' : '600', color: active ? '#000' : '#64748b' }}>{t.lbl}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <AccountModal
+        visible={!!modalMode} mode={modalMode} onClose={() => setModalMode(null)}
+        user={user} token={token} API={API} onUpdateUser={setUser} onLogout={() => { setUser(null); setToken(''); }}
+        paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod}
+        promoCode={promoCode} setPromoCode={setPromoCode} driverInfo={activeRide}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  authContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', padding: 24 },
-  logoBadge: { width: 64, height: 64, borderRadius: 20, backgroundColor: '#10b981', alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-  brand: { fontSize: 32, fontWeight: '800', color: '#fff', textAlign: 'center' },
-  subBrand: { fontSize: 13, color: '#94a3b8', textAlign: 'center', marginBottom: 28, marginTop: 4 },
-  authCard: { backgroundColor: '#111827', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#1f2937' },
-  authInput: { backgroundColor: '#1f2937', color: '#fff', padding: 14, borderRadius: 12, marginBottom: 12, fontSize: 14 },
-  switchText: { color: '#10b981', textAlign: 'center', fontSize: 13, fontWeight: '600' },
+  fullWhite: { flex: 1, backgroundColor: '#fff' },
+  welcomeBanner: { height: 260, backgroundColor: '#dbeafe', justifyContent: 'center', alignItems: 'center' },
+  welcomeCarBox: { alignItems: 'center', justifyContent: 'center' },
+  authInput: { backgroundColor: '#f3f4f6', padding: 14, borderRadius: 12, marginBottom: 12, fontSize: 15, color: '#000' },
+  phoneRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  flagBox: { backgroundColor: '#f3f4f6', padding: 13, borderRadius: 12 },
+  blackBtn: { backgroundColor: '#000', paddingVertical: 15, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  blackBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 16 },
 
-  container: { flex: 1, backgroundColor: '#fff' },
-  floatingTop: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
-  pillBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 24, elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
-  miniAvatar: { width: 24, height: 24, borderRadius: 12 },
-  pillText: { color: '#0f172a', fontWeight: '700', fontSize: 13 },
-  circleBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
+  homeTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
+  blueDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#2563eb' },
+  uberParcelRow: { flexDirection: 'row', gap: 18, borderBottomWidth: 1, borderColor: '#f1f5f9', marginBottom: 14 },
+  modeTab: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingBottom: 10 },
+  modeTabActive: { borderBottomWidth: 3, borderColor: '#000' },
+  wherePill: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f3f4f6', padding: 12, borderRadius: 30, marginBottom: 14 },
+  laterPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  recentBox: { borderWidth: 1, borderColor: '#f1f5f9', borderRadius: 16, paddingHorizontal: 12, marginBottom: 14 },
+  recentRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f8fafc' },
+  placeIcon: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' },
+  yellowAlert: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef08a', padding: 16, borderRadius: 18, marginBottom: 14 },
+  reviewBtn: { backgroundColor: '#fff', alignSelf: 'flex-start', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginTop: 8 },
+  promoBanner: { backgroundColor: '#0f172a', padding: 20, borderRadius: 18, marginBottom: 100 },
 
-  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 22, paddingTop: 10, elevation: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12 },
-  handle: { width: 42, height: 4, backgroundColor: '#cbd5e1', borderRadius: 4, alignSelf: 'center', marginBottom: 10 },
+  pageH1: { fontSize: 30, fontWeight: '800', color: '#000', marginVertical: 10 },
+  srvBig: { flex: 1, backgroundColor: '#f3f4f6', padding: 16, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  srvBigTxt: { fontSize: 16, fontWeight: '800', color: '#000' },
+  srvSmall: { width: '31%', backgroundColor: '#f3f4f6', padding: 14, borderRadius: 14, alignItems: 'center' },
+  srvBadge: { position: 'absolute', top: -6, backgroundColor: '#dc2626', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
 
-  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  modePill: { flex: 1, paddingVertical: 7, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center' },
-  modePillActive: { backgroundColor: '#0f172a' },
-  modeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+  actCard: { flexDirection: 'row', gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  rebookBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f3f4f6', alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginTop: 8 },
 
-  routeBox: { backgroundColor: '#f1f5f9', borderRadius: 16, padding: 12, marginBottom: 8 },
-  routeLineRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  greenDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#10b981' },
-  blackSquare: { width: 10, height: 10, backgroundColor: '#0f172a' },
-  routeDivider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 8, marginLeft: 20 },
-  whereInput: { flex: 1, color: '#0f172a', fontSize: 13, fontWeight: '600', paddingVertical: 2 },
-  searchItem: { padding: 12, backgroundColor: '#f8fafc', borderRadius: 10, marginBottom: 4, borderWidth: 1, borderColor: '#e2e8f0' },
+  accHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  ratingPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f3f4f6', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, marginTop: 6 },
+  accAvatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#64748b', alignItems: 'center', justifyContent: 'center' },
+  accTile: { flex: 1, backgroundColor: '#f3f4f6', paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  infoCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', padding: 16, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#f1f5f9' },
 
-  metaBadge: { backgroundColor: '#ecfdf5', padding: 8, borderRadius: 10, alignItems: 'center', marginTop: 4 },
-  metaText: { color: '#047857', fontSize: 12, fontWeight: '700' },
+  floatNav: { position: 'absolute', bottom: 14, left: 16, right: 16, flexDirection: 'row', backgroundColor: '#fff', borderRadius: 32, padding: 6, elevation: 12, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 12 },
+  navTab: { flex: 1, alignItems: 'center', paddingVertical: 6, borderRadius: 24 },
+  navTabActive: { backgroundColor: '#f3f4f6' },
 
-  rideRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, backgroundColor: '#f8fafc', borderWidth: 1.5, borderColor: '#e2e8f0' },
-  rideRowActive: { borderColor: '#0f172a', backgroundColor: '#f1f5f9' },
-  rideTitle: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
-  rideSub: { color: '#64748b', fontSize: 11, marginTop: 2 },
-  ridePrice: { color: '#0f172a', fontWeight: '800', fontSize: 16 },
-  strikePrice: { color: '#94a3b8', fontSize: 11, textDecorationLine: 'line-through' },
+  planHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 18, marginBottom: 12 },
+  smallChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#f3f4f6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  smallChipTxt: { fontWeight: '700', fontSize: 12, color: '#000' },
+  planInputBox: { marginHorizontal: 18, borderWidth: 2, borderColor: '#000', borderRadius: 16, padding: 12 },
+  planRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  dotBlack: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#000' },
+  sqBlack: { width: 10, height: 10, backgroundColor: '#000' },
+  planInput: { flex: 1, fontSize: 15, fontWeight: '600', color: '#000', paddingVertical: 2 },
+  placeRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' },
 
-  promoRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  promoInput: { flex: 1, backgroundColor: '#f1f5f9', color: '#0f172a', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, fontSize: 13 },
-  promoBtn: { backgroundColor: '#0f172a', paddingHorizontal: 16, justifyContent: 'center', borderRadius: 10 },
+  mapTopBar: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 10, gap: 8 },
+  roundBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 6 },
+  topRoutePill: { flex: 1, backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, elevation: 6 },
 
-  payRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  payPill: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center' },
-  payPillActive: { backgroundColor: '#10b981' },
+  uberSheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 22, paddingTop: 10, elevation: 20 },
+  sheetHandle: { width: 40, height: 4, backgroundColor: '#cbd5e1', borderRadius: 4, alignSelf: 'center', marginBottom: 10 },
+  sheetTitle: { fontSize: 20, fontWeight: '800', color: '#000', textAlign: 'center', marginBottom: 10 },
+  rideOption: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, marginBottom: 8, borderWidth: 2, borderColor: 'transparent' },
+  rideOptionActive: { borderColor: '#000', backgroundColor: '#f8fafc' },
+  vehicleImgBox: { width: 48, height: 48, borderRadius: 12, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' },
+  fasterBadge: { backgroundColor: '#2563eb', color: '#fff', fontSize: 10, fontWeight: '800', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  payBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: 1, borderColor: '#f1f5f9' },
 
-  uberBlackBtn: { backgroundColor: '#000', paddingVertical: 15, borderRadius: 14, alignItems: 'center' },
-  uberBlackBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  progTrack: { height: 4, backgroundColor: '#e2e8f0', borderRadius: 4, overflow: 'hidden', marginVertical: 4 },
+  progFill: { width: 140, height: 4, backgroundColor: '#2563eb', borderRadius: 4 },
+  detailBox: { backgroundColor: '#f8fafc', padding: 12, borderRadius: 12 },
+  driverStrip: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f8fafc', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  drvImg: { width: 50, height: 50, borderRadius: 25 },
+  drvImgPlaceholder: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#64748b', alignItems: 'center', justifyContent: 'center' },
+  callCircle: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
+  grayPillBtn: { flexDirection: 'row', gap: 6, backgroundColor: '#f3f4f6', paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  cancelRedBtn: { backgroundColor: '#ffe4e6', paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
-  radarRing: { position: 'absolute', width: 54, height: 54, borderRadius: 27, backgroundColor: '#10b981' },
-  radarCenter: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', elevation: 4 },
-
-  statusHeader: { alignItems: 'center', gap: 2 },
-  statusTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a' },
-  statusSub: { fontSize: 13, color: '#475569' },
-  routeSummary: { fontSize: 11, color: '#64748b', marginTop: 2 },
-
-  driverBox: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f1f5f9', padding: 12, borderRadius: 14 },
-  driverAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
-  driverName: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
-  driverMeta: { fontSize: 12, color: '#475569', marginTop: 2 },
-  receiptCard: { backgroundColor: '#f8fafc', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', gap: 6 },
-  receiptAmt: { fontSize: 26, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
-  receiptInfo: { fontSize: 12, color: '#64748b', textAlign: 'center' },
-  lightInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', color: '#0f172a', padding: 11, borderRadius: 10, fontSize: 14, marginBottom: 8 },
-  cancelBtn: { backgroundColor: '#ffe4e6', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
-  cancelBtnText: { color: '#e11d48', fontWeight: '700', fontSize: 14 },
-
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
-  modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, maxHeight: '85%' },
-  bigAvatar: { width: 84, height: 84, borderRadius: 42 },
-  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 4, marginTop: 4 }
+  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  cancelCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  reasonRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderColor: '#f1f5f9' }
 });

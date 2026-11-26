@@ -1,8 +1,12 @@
 import React, { useRef, useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Text } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recenterCount, onMapPress }) {
+export default function LeafletMap({
+  pickup, drop, driverLoc, nearbyDrivers = [], routeCoords = [],
+  recenterCount = 0, confirmMode = false, etaText = '',
+  onMapPress, onCenterChange
+}) {
   const webRef = useRef(null);
 
   const html = `
@@ -13,10 +17,11 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
       <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
       <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
       <style>
-        body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #f1f5f9; }
-        .pickup-dot { width: 20px; height: 20px; background: #10b981; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
-        .drop-pin { font-size: 28px; line-height: 28px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); }
-        .car-pin { font-size: 28px; line-height: 28px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+        body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #f3f4f6; }
+        .pickup-dot { width: 16px; height: 16px; background: #000; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+        .drop-sq { width: 14px; height: 14px; background: #000; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+        .car-pin { font-size: 24px; line-height: 24px; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35)); }
+        .eta-tag { background: #fff; color: #000; font-family: sans-serif; font-weight: 800; font-size: 12px; padding: 4px 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap; }
       </style>
     </head>
     <body>
@@ -26,7 +31,7 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
           container: 'map',
           style: 'https://tiles.openfreemap.org/styles/liberty',
           center: [${pickup.lng}, ${pickup.lat}],
-          zoom: 15,
+          zoom: 15.2,
           attributionControl: false
         });
 
@@ -34,81 +39,89 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
         let pendingData = null;
         let lastRecenter = 0;
 
-        const pEl = document.createElement('div');
-        pEl.className = 'pickup-dot';
+        const pEl = document.createElement('div'); pEl.className = 'pickup-dot';
         const pickupMarker = new maplibregl.Marker({ element: pEl }).setLngLat([${pickup.lng}, ${pickup.lat}]).addTo(map);
 
         let dropMarker = null;
         let driverMarker = null;
+        let etaMarker = null;
+        let nearbyMarkers = [];
 
         map.on('load', () => {
           mapLoaded = true;
-          map.addSource('route', {
-            type: 'geojson',
-            data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } }
-          });
+          map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } } });
           map.addLayer({
-            id: 'route-line',
-            type: 'line',
-            source: 'route',
+            id: 'route-line', type: 'line', source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#0f172a', 'line-width': 5 }
+            paint: { 'line-color': '#000000', 'line-width': 4.5 }
           });
           if (pendingData) applyUpdate(pendingData);
         });
 
         map.on('click', (e) => {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'MAP_CLICK', lat: e.lngLat.lat, lng: e.lngLat.lng
-          }));
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_CLICK', lat: e.lngLat.lat, lng: e.lngLat.lng }));
+        });
+
+        map.on('moveend', () => {
+          const c = map.getCenter();
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_CENTER', lat: c.lat, lng: c.lng }));
         });
 
         function applyUpdate(data) {
-          if (data.pickup) {
-            pickupMarker.setLngLat([data.pickup.lng, data.pickup.lat]);
+          if (data.confirmMode) {
+            pickupMarker.getElement().style.display = 'none';
+          } else {
+            pickupMarker.getElement().style.display = 'block';
+            if (data.pickup) pickupMarker.setLngLat([data.pickup.lng, data.pickup.lat]);
           }
+
           if (data.recenterCount && data.recenterCount !== lastRecenter && data.pickup) {
             lastRecenter = data.recenterCount;
             map.flyTo({ center: [data.pickup.lng, data.pickup.lat], zoom: 16 });
             return;
           }
-          if (data.drop) {
+
+          if (data.drop && !data.confirmMode) {
             if (!dropMarker) {
-              const dEl = document.createElement('div');
-              dEl.className = 'drop-pin';
-              dEl.innerText = '📍';
-              dropMarker = new maplibregl.Marker({ element: dEl, anchor: 'bottom' }).setLngLat([data.drop.lng, data.drop.lat]).addTo(map);
-            } else {
-              dropMarker.setLngLat([data.drop.lng, data.drop.lat]);
-            }
-          } else if (dropMarker) {
-            dropMarker.remove(); dropMarker = null;
-          }
+              const dEl = document.createElement('div'); dEl.className = 'drop-sq';
+              dropMarker = new maplibregl.Marker({ element: dEl }).setLngLat([data.drop.lng, data.drop.lat]).addTo(map);
+            } else dropMarker.setLngLat([data.drop.lng, data.drop.lat]);
+          } else if (dropMarker) { dropMarker.remove(); dropMarker = null; }
 
           if (data.driverLoc) {
             if (!driverMarker) {
-              const cEl = document.createElement('div');
-              cEl.className = 'car-pin';
-              cEl.innerText = '🚕';
+              const cEl = document.createElement('div'); cEl.className = 'car-pin'; cEl.innerText = '🚘';
               driverMarker = new maplibregl.Marker({ element: cEl }).setLngLat([data.driverLoc.lng, data.driverLoc.lat]).addTo(map);
-            } else {
-              driverMarker.setLngLat([data.driverLoc.lng, data.driverLoc.lat]);
-            }
-          } else if (driverMarker) {
-            driverMarker.remove(); driverMarker = null;
+            } else driverMarker.setLngLat([data.driverLoc.lng, data.driverLoc.lat]);
+          } else if (driverMarker) { driverMarker.remove(); driverMarker = null; }
+
+          // কাছাকাছি অনলাইন গাড়িগুলো দেখানো
+          nearbyMarkers.forEach(m => m.remove());
+          nearbyMarkers = [];
+          if (data.nearbyDrivers && !data.confirmMode) {
+            data.nearbyDrivers.forEach(d => {
+              const el = document.createElement('div'); el.className = 'car-pin';
+              el.innerText = d.vehicle_type === 'BIKE' ? '🏍️' : d.vehicle_type === 'CNG' ? '🛺' : '🚘';
+              nearbyMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([d.lng, d.lat]).addTo(map));
+            });
           }
 
           const src = map.getSource('route');
           if (src) {
-            const coords = (data.routeCoords && data.routeCoords.length > 1)
-              ? data.routeCoords.map(c => [c[1], c[0]])
-              : [];
+            const coords = (!data.confirmMode && data.routeCoords && data.routeCoords.length > 1)
+              ? data.routeCoords.map(c => [c[1], c[0]]) : [];
             src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } });
 
+            if (etaMarker) { etaMarker.remove(); etaMarker = null; }
             if (coords.length > 1) {
+              if (data.etaText) {
+                const eEl = document.createElement('div'); eEl.className = 'eta-tag'; eEl.innerText = data.etaText;
+                const mid = coords[Math.floor(coords.length * 0.25)];
+                etaMarker = new maplibregl.Marker({ element: eEl, offset: [0, -18] }).setLngLat(mid).addTo(map);
+              }
               const bounds = new maplibregl.LngLatBounds();
               coords.forEach(c => bounds.extend(c));
-              map.fitBounds(bounds, { padding: { top: 100, bottom: 380, left: 45, right: 45 }, maxZoom: 16 });
+              map.fitBounds(bounds, { padding: { top: 110, bottom: 390, left: 45, right: 45 }, maxZoom: 16 });
             }
           }
         }
@@ -123,9 +136,9 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
   `;
 
   useEffect(() => {
-    const payload = JSON.stringify({ pickup, drop, driverLoc, routeCoords, recenterCount });
+    const payload = JSON.stringify({ pickup, drop, driverLoc, nearbyDrivers, routeCoords, recenterCount, confirmMode, etaText });
     webRef.current?.injectJavaScript(`if(window.updateMap) window.updateMap(${payload}); true;`);
-  }, [pickup, drop, driverLoc, routeCoords, recenterCount]);
+  }, [pickup, drop, driverLoc, nearbyDrivers, routeCoords, recenterCount, confirmMode, etaText]);
 
   return (
     <View style={styles.container}>
@@ -133,23 +146,33 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recen
         ref={webRef}
         originWhitelist={['*']}
         source={{ html, baseUrl: 'https://uber-bd-platform.onrender.com' }}
-        style={styles.map}
+        style={{ flex: 1 }}
         javaScriptEnabled={true}
         domStorageEnabled={true}
         onMessage={(event) => {
           try {
             const msg = JSON.parse(event.nativeEvent.data);
-            if (msg.type === 'MAP_CLICK' && onMapPress) {
-              onMapPress({ lat: msg.lat, lng: msg.lng });
-            }
+            if (msg.type === 'MAP_CLICK' && onMapPress) onMapPress({ lat: msg.lat, lng: msg.lng });
+            if (msg.type === 'MAP_CENTER' && onCenterChange) onCenterChange({ lat: msg.lat, lng: msg.lng });
           } catch {}
         }}
       />
+      {confirmMode && (
+        <View pointerEvents="none" style={styles.centerPinWrap}>
+          <View style={styles.centerCircle} />
+          <View style={styles.centerPinHead}><View style={styles.centerPinInner} /></View>
+          <View style={styles.centerPinStick} />
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  map: { flex: 1 }
+  centerPinWrap: { position: 'absolute', top: '42%', left: '50%', marginLeft: -40, marginTop: -55, width: 80, height: 80, alignItems: 'center', justifyContent: 'center' },
+  centerCircle: { position: 'absolute', width: 76, height: 76, borderRadius: 38, backgroundColor: 'rgba(59,130,246,0.18)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.4)' },
+  centerPinHead: { width: 22, height: 22, borderRadius: 4, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  centerPinInner: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
+  centerPinStick: { width: 2.5, height: 14, backgroundColor: '#000' }
 });
