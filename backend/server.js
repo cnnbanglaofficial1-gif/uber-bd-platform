@@ -12,7 +12,14 @@ const { haversineKm, calculateActualDistanceKm } = require('./fareCalculator');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
+
+// প্রোফাইল ছবি ও বিকাশ/নগদ নম্বরের কলাম অটোমেটিক তৈরি
+pool.query(`
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS bkash_number VARCHAR(20);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS nagad_number VARCHAR(20);
+`).catch((e) => console.error('Migration note:', e.message));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -38,7 +45,7 @@ app.get('/', (req, res) => {
   res.json({ status: 'Uber BD Platform Backend Running 🚀', time: new Date() });
 });
 
-// ১. REGISTER & LOGIN
+// ১. REGISTER, LOGIN & PROFILE UPDATE
 app.post('/api/auth/register', async (req, res) => {
   const { name, phone, password, role, vehicle_type, plate_number } = req.body;
   const client = await pool.connect();
@@ -46,7 +53,7 @@ app.post('/api/auth/register', async (req, res) => {
     await client.query('BEGIN');
     const hash = await bcrypt.hash(password, 10);
     const userRes = await client.query(
-      'INSERT INTO users (name, phone, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, phone, role',
+      'INSERT INTO users (name, phone, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, phone, role, avatar_url, bkash_number, nagad_number',
       [name, phone, hash, role || 'RIDER']
     );
     const user = userRes.rows[0];
@@ -84,9 +91,36 @@ app.post('/api/auth/login', async (req, res) => {
       driverProfile = dp.rows[0] || null;
     }
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.json({ user: { id: user.id, name: user.name, phone: user.phone, role: user.role, driverProfile }, token });
+    res.json({
+      user: {
+        id: user.id, name: user.name, phone: user.phone, role: user.role,
+        avatar_url: user.avatar_url, bkash_number: user.bkash_number, nagad_number: user.nagad_number,
+        driverProfile
+      },
+      token
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/auth/profile', auth(['RIDER', 'DRIVER', 'ADMIN']), async (req, res) => {
+  const { name, phone, avatar_url, bkash_number, nagad_number } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE users SET
+        name = COALESCE($1, name),
+        phone = COALESCE($2, phone),
+        avatar_url = COALESCE($3, avatar_url),
+        bkash_number = COALESCE($4, bkash_number),
+        nagad_number = COALESCE($5, nagad_number)
+       WHERE id = $6
+       RETURNING id, name, phone, role, avatar_url, bkash_number, nagad_number`,
+      [name || null, phone || null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
+    );
+    res.json({ user: result.rows[0] });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

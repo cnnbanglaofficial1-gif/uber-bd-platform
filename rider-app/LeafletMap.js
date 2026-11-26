@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, onSelectDrop }) {
+export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, recenterCount, onSelectDrop }) {
   const webRef = useRef(null);
 
   const html = `
@@ -32,6 +32,7 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, onSel
 
         let mapLoaded = false;
         let pendingData = null;
+        let lastRecenter = 0;
 
         const pEl = document.createElement('div');
         pEl.className = 'pickup-dot';
@@ -65,6 +66,11 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, onSel
         function applyUpdate(data) {
           if (data.pickup) {
             pickupMarker.setLngLat([data.pickup.lng, data.pickup.lat]);
+          }
+          if (data.recenterCount && data.recenterCount !== lastRecenter && data.pickup) {
+            lastRecenter = data.recenterCount;
+            map.flyTo({ center: [data.pickup.lng, data.pickup.lat], zoom: 16 });
+            return;
           }
           if (data.drop) {
             if (!dropMarker) {
@@ -103,8 +109,6 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, onSel
               const bounds = new maplibregl.LngLatBounds();
               coords.forEach(c => bounds.extend(c));
               map.fitBounds(bounds, { padding: { top: 100, bottom: 380, left: 45, right: 45 }, maxZoom: 16 });
-            } else if (data.pickup && !data.drop) {
-              map.flyTo({ center: [data.pickup.lng, data.pickup.lat], zoom: 15.2 });
             }
           }
         }
@@ -119,9 +123,9 @@ export default function LeafletMap({ pickup, drop, driverLoc, routeCoords, onSel
   `;
 
   useEffect(() => {
-    const payload = JSON.stringify({ pickup, drop, driverLoc, routeCoords });
+    const payload = JSON.stringify({ pickup, drop, driverLoc, routeCoords, recenterCount });
     webRef.current?.injectJavaScript(`if(window.updateMap) window.updateMap(${payload}); true;`);
-  }, [pickup, drop, driverLoc, routeCoords]);
+  }, [pickup, drop, driverLoc, routeCoords, recenterCount]);
 
   return (
     <View style={styles.container}>

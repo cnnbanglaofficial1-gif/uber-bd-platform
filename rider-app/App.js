@@ -21,6 +21,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
 
   const [pickup, setPickup] = useState({ lat: 23.8103, lng: 90.4125 });
+  const [recenterCount, setRecenterCount] = useState(0);
   const [drop, setDrop] = useState(null);
   const [dropAddress, setDropAddress] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -42,13 +43,18 @@ export default function App() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         setPickup({ lat: loc.coords.latitude, lng: loc.coords.longitude });
       }
     } catch {}
   };
 
-  useEffect(() => { fetchGPS(); }, []);
+  const handleRecenter = async () => {
+    await fetchGPS();
+    setRecenterCount((c) => c + 1);
+  };
+
+  useEffect(() => { handleRecenter(); }, []);
 
   useEffect(() => {
     if (!user || !token) return;
@@ -64,7 +70,7 @@ export default function App() {
     const checkActive = async () => {
       try {
         const res = await axios.get(`${API}/api/rides/my-active`, { headers: { Authorization: `Bearer ${token}` } });
-        if (res.data.ride) setActiveRide(res.data.ride);
+        setActiveRide(res.data.ride || null);
       } catch {}
     };
     checkActive();
@@ -200,20 +206,24 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
-      {/* Full Screen Map */}
-      <LeafletMap pickup={pickup} drop={drop} driverLoc={driverLoc} routeCoords={routeCoords} onSelectDrop={(c) => selectDrop(c)} />
+      <LeafletMap
+        pickup={pickup}
+        drop={drop}
+        driverLoc={driverLoc}
+        routeCoords={routeCoords}
+        recenterCount={recenterCount}
+        onSelectDrop={(c) => selectDrop(c)}
+      />
 
-      {/* Floating Top Header Pills */}
       <View style={[styles.floatingTop, { top: TOP_PAD }]}>
         <TouchableOpacity style={styles.pillBtn} onPress={() => Alert.alert(user.name, 'লগআউট করতে চান?', [{ text: 'না' }, { text: 'হ্যাঁ', onPress: () => { setUser(null); setToken(''); } }])}>
           <Text style={styles.pillText}>👤 {user.name}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.circleBtn} onPress={fetchGPS}>
-          <Text style={{ fontSize: 18 }}>🎯</Text>
+        <TouchableOpacity style={styles.circleBtn} onPress={handleRecenter}>
+          <Text style={{ fontSize: 20 }}>🎯</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Uber-Style Floating White Bottom Sheet */}
       <View style={styles.sheet}>
         <View style={styles.handle} />
 
@@ -268,7 +278,6 @@ export default function App() {
           </View>
         ) : (
           <ScrollView style={{ maxHeight: 370 }} showsVerticalScrollIndicator={false}>
-            {/* Pickup -> Drop Visual Route Box */}
             <View style={styles.routeBox}>
               <View style={styles.routeLineRow}>
                 <View style={styles.greenDot} />
@@ -373,7 +382,7 @@ const styles = StyleSheet.create({
   floatingTop: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
   pillBtn: { backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
   pillText: { color: '#0f172a', fontWeight: '700', fontSize: 13 },
-  circleBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
+  circleBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8 },
 
   sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 22, paddingTop: 10, elevation: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12 },
   handle: { width: 42, height: 4, backgroundColor: '#cbd5e1', borderRadius: 4, alignSelf: 'center', marginBottom: 12 },
@@ -421,4 +430,4 @@ const styles = StyleSheet.create({
   lightInput: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', color: '#0f172a', padding: 12, borderRadius: 10, fontSize: 14 },
   cancelBtn: { backgroundColor: '#ffe4e6', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
   cancelBtnText: { color: '#e11d48', fontWeight: '700', fontSize: 14 }
-}); 
+});
