@@ -6,6 +6,8 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { File, Paths } from 'expo-file-system';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import DriverMap from './DriverMap';
@@ -27,6 +29,39 @@ const COUNTRIES = [
   { name: 'United Kingdom', code: '+44', flag: '🇬🇧' },
   { name: 'United States', code: '+1', flag: '🇺🇸' }
 ];
+
+// Uber-এর মতো ৩-নোট প্রফেশনাল চিম রিংটোন WAV জেনারেটর (ইন্টারনেট বা MP3 ফাইল ছাড়াই বাজবে)
+function buildUberChimeWav() {
+  const sr = 16000;
+  const totalSamples = Math.floor(sr * 1.35);
+  const buffer = new ArrayBuffer(44 + totalSamples * 2);
+  const view = new DataView(buffer);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); view.setUint32(4, 36 + totalSamples * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, sr, true); view.setUint32(28, sr * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); str(36, 'data'); view.setUint32(40, totalSamples * 2, true);
+
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / sr;
+    let sample = 0;
+    if (t < 0.22) {
+      const env = Math.exp(-t * 10);
+      sample = (Math.sin(2 * Math.PI * 880 * t) + 0.35 * Math.sin(2 * Math.PI * 1760 * t)) * env;
+    } else if (t >= 0.22 && t < 0.44) {
+      const lt = t - 0.22;
+      const env = Math.exp(-lt * 10);
+      sample = (Math.sin(2 * Math.PI * 1108.73 * lt) + 0.35 * Math.sin(2 * Math.PI * 2217.46 * lt)) * env;
+    } else if (t >= 0.44 && t < 1.0) {
+      const lt = t - 0.44;
+      const env = Math.exp(-lt * 5.5);
+      sample = (Math.sin(2 * Math.PI * 1318.51 * lt) + 0.35 * Math.sin(2 * Math.PI * 2637.02 * lt)) * env;
+    }
+    const clamped = Math.max(-1, Math.min(1, sample * 0.55));
+    view.setInt16(44 + i * 2, clamped * 32767, true);
+  }
+  return new Uint8Array(buffer);
+}
 
 try {
   Notifications.setNotificationHandler({
@@ -79,7 +114,6 @@ export default function App() {
   const [multiVehicles, setMultiVehicles] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Forgot Password
   const [forgotOpen, setForgotOpen] = useState(false);
   const [fEmail, setFEmail] = useState('');
   const [fCode, setFCode] = useState('');
@@ -102,7 +136,6 @@ export default function App() {
   const [tripSec, setTripSec] = useState(0);
   const [tripReceipt, setTripReceipt] = useState(null);
 
-  // 4-Digit Start PIN Modal
   const [pinModal, setPinModal] = useState(false);
   const [riderPinInput, setRiderPinInput] = useState('');
 
@@ -113,11 +146,40 @@ export default function App() {
   const [quests, setQuests] = useState([]);
 
   const notifiedIds = useRef(new Set());
+  const ringPlayerRef = useRef(null);
   const visibleOffers = availableRides.filter((r) => !skippedIds.includes(r.id));
   const currentOffer = visibleOffers[0] || null;
 
+  const startRingtone = () => {
+    try {
+      if (ringPlayerRef.current) {
+        ringPlayerRef.current.loop = true;
+        ringPlayerRef.current.seekTo(0);
+        ringPlayerRef.current.play();
+      }
+    } catch {}
+  };
+
+  const stopRingtone = () => {
+    try {
+      if (ringPlayerRef.current) {
+        ringPlayerRef.current.loop = false;
+        ringPlayerRef.current.pause();
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     (async () => {
+      try {
+        await setAudioModeAsync({ playsInSilentMode: true });
+        const file = new File(Paths.cache, 'zoddir_ring.wav');
+        file.create({ overwrite: true });
+        file.write(buildUberChimeWav());
+        const p = createAudioPlayer({ uri: file.uri });
+        p.loop = true;
+        ringPlayerRef.current = p;
+      } catch {}
       try {
         await Notifications.requestPermissionsAsync();
         if (Platform.OS === 'android') {
@@ -129,19 +191,30 @@ export default function App() {
       } catch {}
     })();
     const sub = Notifications.addNotificationResponseReceivedListener(() => setTab('HOME'));
-    return () => sub.remove();
+    return () => { sub.remove(); stopRingtone(); };
   }, []);
 
+  // ১০ সেকেন্ড অফার টাইমার + Uber চিম রিংটোন লুপ!
   useEffect(() => {
-    if (!currentOffer) { setOfferSec(10); return; }
+    if (!currentOffer) {
+      stopRingtone();
+      setOfferSec(10);
+      return;
+    }
     setOfferSec(10);
+    startRingtone();
     const iv = setInterval(() => {
       setOfferSec((prev) => {
-        if (prev <= 1) { clearInterval(iv); declineRide(currentOffer.id); return 0; }
+        if (prev <= 1) {
+          clearInterval(iv);
+          stopRingtone();
+          declineRide(currentOffer.id);
+          return 0;
+        }
         return prev - 1;
       });
     }, 1000);
-    return () => clearInterval(iv);
+    return () => { clearInterval(iv); stopRingtone(); };
   }, [currentOffer?.id]);
 
   useEffect(() => {
@@ -211,7 +284,7 @@ export default function App() {
       setAvailableRides((prev) => [ride, ...prev.filter((r) => r.id !== ride.id)]);
       triggerRidePopup(ride);
     });
-    socket.on('ride_cancelled', () => { setActiveRide(null); setPinModal(false); Alert.alert('Cancelled', 'Rider cancelled the trip'); });
+    socket.on('ride_cancelled', () => { stopRingtone(); setActiveRide(null); setPinModal(false); Alert.alert('Cancelled', 'Rider cancelled the trip'); });
 
     const updateGpsNow = async () => {
       try {
@@ -235,7 +308,6 @@ export default function App() {
     updateGpsNow();
     const gpsTimer = setInterval(updateGpsNow, 4000);
 
-    // BUG FIX: ব্যবহার করছে driverLocRef.current যাতে Go ও Premium অফার সাথে সাথে কেটে না যায়!
     const pollTimer = setInterval(async () => {
       try {
         const act = await axios.get(`${API}/api/rides/my-active`, { headers: { Authorization: `Bearer ${token}` } });
@@ -302,11 +374,12 @@ export default function App() {
     try {
       await axios.post(`${API}/api/driver/status`, { is_online: val }, { headers: { Authorization: `Bearer ${token}` } });
       setIsOnline(val);
-      if (!val) { setAvailableRides([]); setSkippedIds([]); }
+      if (!val) { stopRingtone(); setAvailableRides([]); setSkippedIds([]); }
     } catch (err) { Alert.alert('Verification Needed', err.response?.data?.error || 'Approval required'); }
   };
 
   const acceptRide = async (id) => {
+    stopRingtone();
     setLoading(true);
     try {
       const res = await axios.post(`${API}/api/rides/${id}/accept`, {}, { headers: { Authorization: `Bearer ${token}` } });
@@ -316,6 +389,7 @@ export default function App() {
   };
 
   const declineRide = async (id) => {
+    stopRingtone();
     setSkippedIds((prev) => [...prev, id]);
     setAvailableRides((prev) => prev.filter((r) => r.id !== id));
     try { await axios.post(`${API}/api/rides/${id}/decline`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch {}
@@ -568,10 +642,14 @@ export default function App() {
                         <View style={styles.countTrack}><View style={[styles.countFill, { width: `${offerSec * 10}%` }]} /></View>
                         <Text style={{ color: '#00D2B8', fontSize: 11, fontWeight: '800', marginTop: 6 }}>[{currentOffer.ride_type || 'RIDE'} • {currentOffer.vehicle_type}]</Text>
                         <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 2 }}>From: {currentOffer.pickup_address}</Text>
-                        <Text style={{ color: '#cbd5e1', fontSize: 13, marginTop: 2, marginBottom: 10 }}>To: {currentOffer.drop_address}</Text>
+                        <Text style={{ color: '#cbd5e1', fontSize: 13, marginTop: 2, marginBottom: 12 }}>To: {currentOffer.drop_address}</Text>
                         <View style={{ flexDirection: 'row', gap: 10 }}>
-                          <TouchableOpacity style={styles.skipBtn} onPress={() => declineRide(currentOffer.id)}><Text style={{ color: '#fff', fontWeight: '700' }}>{t.decline}</Text></TouchableOpacity>
-                          <TouchableOpacity style={styles.acceptBtn} onPress={() => acceptRide(currentOffer.id)}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 15 }}>{t.acceptRide} ({offerSec}s)</Text></TouchableOpacity>
+                          <TouchableOpacity style={styles.skipBtn} onPress={() => declineRide(currentOffer.id)}>
+                            <Text style={{ color: '#f8fafc', fontWeight: '800', fontSize: 14 }}>{t.decline}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.acceptBtn} onPress={() => acceptRide(currentOffer.id)}>
+                            <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 15 }}>{t.acceptRide} ({offerSec}s)</Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
                     )}
@@ -665,17 +743,12 @@ export default function App() {
         })}
       </View>
 
-      {/* 4-DIGIT RIDER PIN MODAL TO START TRIP */}
       <Modal visible={pinModal} transparent animationType="slide">
         <View style={styles.modalBg}>
           <View style={styles.receiptCard}>
             <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A', textAlign: 'center' }}>{t.enterPinTitle}</Text>
             <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 4, marginBottom: 14 }}>{t.enterPinSub}</Text>
-            <TextInput
-              style={[styles.input, { textAlign: 'center', fontSize: 26, fontWeight: '900', letterSpacing: 10 }]}
-              placeholder="••••" maxLength={4} keyboardType="number-pad"
-              value={riderPinInput} onChangeText={setRiderPinInput}
-            />
+            <TextInput style={[styles.input, { textAlign: 'center', fontSize: 26, fontWeight: '900', letterSpacing: 10 }]} placeholder="••••" maxLength={4} keyboardType="number-pad" value={riderPinInput} onChangeText={setRiderPinInput} />
             <TouchableOpacity style={styles.navyBtn} onPress={verifyPinAndStart} disabled={loading}>
               {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>{t.verifyStartBtn}</Text>}
             </TouchableOpacity>
@@ -705,7 +778,7 @@ export default function App() {
       <DriverMenus
         screen={menuScreen} setScreen={setMenuScreen} onClose={() => setMenuScreen(null)}
         user={user} token={token} API={API} onRefreshUser={refreshProfile}
-        onLogout={() => { setUser(null); setToken(''); }}
+        onLogout={() => { stopRingtone(); setUser(null); setToken(''); }}
         wallet={wallet} txns={txns} withdraws={withdraws} duePayments={duePayments} onReloadWallet={loadWallet}
         lang={lang} setLang={setLang} nightMode={nightMode} setNightMode={setNightMode}
       />
@@ -742,6 +815,8 @@ const styles = StyleSheet.create({
   timerBadge: { backgroundColor: '#00D2B8', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   countTrack: { height: 4, backgroundColor: '#1e293b', borderRadius: 4, overflow: 'hidden' },
   countFill: { height: 4, backgroundColor: '#A3E635' },
+  skipBtn: { flex: 1, backgroundColor: '#1e293b', borderWidth: 1.5, borderColor: '#475569', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  acceptBtn: { flex: 2, backgroundColor: '#00D2B8', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', elevation: 4 },
   stepRow: { flexDirection: 'row', gap: 6 },
   stepPill: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 6, borderRadius: 10, alignItems: 'center' },
   liveTimerBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0F172A', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
