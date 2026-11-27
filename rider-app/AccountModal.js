@@ -11,7 +11,7 @@ import { STRINGS } from './i18n';
 
 export default function AccountModal({
   visible, mode, onClose, user, token, API, onUpdateUser, onLogout,
-  paymentMethod, setPaymentMethod, promoCode, setPromoCode, driverInfo, lang, setLang
+  paymentMethod, setPaymentMethod, promoCode, setPromoCode, driverInfo, lang, setLang, pubSettings = {}
 }) {
   const t = STRINGS[lang || 'en'];
   const [accTab, setAccTab] = useState('Home');
@@ -28,8 +28,7 @@ export default function AccountModal({
   const [newPass, setNewPass] = useState('');
   const [voucherInput, setVoucherInput] = useState('');
 
-  // Linking payment method
-  const [linkingMethod, setLinkingMethod] = useState(null); // 'BKASH' | 'NAGAD' | 'CARD'
+  const [linkingMethod, setLinkingMethod] = useState(null);
   const [linkNum, setLinkNum] = useState('');
   const [linkPin, setLinkPin] = useState('');
 
@@ -54,23 +53,21 @@ export default function AccountModal({
     try {
       const res = await axios.put(`${API}/api/auth/profile`, { name, phone, email, gender, avatar_url: avatar, bkash_number: bkash, nagad_number: nagad }, { headers: { Authorization: `Bearer ${token}` } });
       onUpdateUser(res.data.user);
-      Alert.alert('Saved', 'Profile updated!');
+      Alert.alert('Saved', lang === 'bn' ? 'প্রোফাইল আপডেট হয়েছে!' : 'Profile updated!');
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Update failed'); }
     setLoading(false);
   };
 
   const linkDigitalAccount = async () => {
-    if (!linkNum || !linkPin) return Alert.alert('Required', 'Enter account/card details & verification PIN');
+    if (!linkNum || !linkPin) return Alert.alert('Required', 'Enter account/card details & PIN');
     setLoading(true);
     try {
-      const body = linkingMethod === 'CARD'
-        ? { method: 'CARD', card_last4: linkNum.slice(-4) }
-        : { method: linkingMethod, account_number: linkNum };
+      const body = linkingMethod === 'CARD' ? { method: 'CARD', card_last4: linkNum.slice(-4) } : { method: linkingMethod, account_number: linkNum };
       const res = await axios.post(`${API}/api/rider/link-payment`, body, { headers: { Authorization: `Bearer ${token}` } });
       onUpdateUser(res.data.user);
       setPaymentMethod(linkingMethod);
       setLinkingMethod(null); setLinkNum(''); setLinkPin('');
-      Alert.alert('Linked Successfully', `${linkingMethod} is now linked for automatic payments!`);
+      Alert.alert('Linked', `${linkingMethod} linked!`);
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Link failed'); }
     setLoading(false);
   };
@@ -80,12 +77,21 @@ export default function AccountModal({
     setLoading(true);
     try {
       await axios.post(`${API}/api/auth/change-password`, { old_password: oldPass, new_password: newPass }, { headers: { Authorization: `Bearer ${token}` } });
-      Alert.alert('Success', 'Password updated!'); setOldPass(''); setNewPass('');
+      Alert.alert('Success', lang === 'bn' ? 'পাসওয়ার্ড পরিবর্তন হয়েছে' : 'Password updated!');
+      setOldPass(''); setNewPass('');
     } catch (err) { Alert.alert('Failed', err.response?.data?.error || 'Error'); }
     setLoading(false);
   };
 
   const isLinked = (k) => k === 'CASH' || (k === 'BKASH' && user?.bkash_linked) || (k === 'NAGAD' && user?.nagad_linked) || (k === 'CARD' && user?.card_linked);
+
+  // Admin Panel থেকে যেগুলো ON আছে শুধু সেগুলোই দেখাবে
+  const allMethods = [
+    { k: 'CASH', label: 'Cash', sub: lang === 'bn' ? 'ট্রিপ শেষে নগদ টাকা দিন' : 'Pay cash to driver', enabled: true },
+    { k: 'BKASH', label: 'bKash', sub: user?.bkash_linked ? `Linked: ${user.bkash_number}` : (lang === 'bn' ? 'লিংক করা নেই • অ্যাড করুন' : 'Not linked • Tap to link'), enabled: pubSettings.enable_bkash !== 'false' },
+    { k: 'NAGAD', label: 'Nagad', sub: user?.nagad_linked ? `Linked: ${user.nagad_number}` : (lang === 'bn' ? 'লিংক করা নেই • অ্যাড করুন' : 'Not linked • Tap to link'), enabled: pubSettings.enable_nagad !== 'false' },
+    { k: 'CARD', label: 'Credit / Debit Card', sub: user?.card_linked ? `Card •••• ${user.card_last4}` : (lang === 'bn' ? 'লিংক করা নেই • অ্যাড করুন' : 'Not linked • Tap to add'), enabled: pubSettings.enable_card !== 'false' }
+  ].filter((m) => m.enabled);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -102,7 +108,7 @@ export default function AccountModal({
             </View>
             <View style={{ padding: 20 }}>
               <Text style={{ fontSize: 24, fontWeight: '800', color: '#0F172A' }}>{driverInfo.driver_name || 'Driver'}</Text>
-              <Text style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{driverInfo.vehicle_type} • {driverInfo.vehicle_model || 'Verified'} • {driverInfo.plate_number || 'DHAKA'}</Text>
+              <Text style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{driverInfo.vehicle_type} • {driverInfo.vehicle_model || ''} • {driverInfo.plate_number || ''}</Text>
               <View style={styles.statsRow}>
                 <View style={styles.statBox}><Text style={styles.statVal}>{driverInfo.driver_trips || 1}</Text><Text style={styles.statLbl}>Trips</Text></View>
                 <View style={styles.statBox}><Text style={styles.statVal}>{driverInfo.driver_rating || '4.95'}</Text><Text style={styles.statLbl}>Rating</Text></View>
@@ -122,15 +128,17 @@ export default function AccountModal({
             </View>
 
             <View style={styles.zoddirCashCard}>
-              <Text style={{ fontSize: 13, color: '#00D2B8', fontWeight: '700' }}>Zoddir Auto-Pay Wallet</Text>
-              <Text style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>বিকাশ, নগদ বা কার্ড আগে লিংক করে রাখলে ট্রিপ শেষে অটো পেমেন্ট হবে। লিংক না থাকলে শুধু Cash ব্যবহার করুন।</Text>
+              <Text style={{ fontSize: 13, color: '#00D2B8', fontWeight: '700' }}>Zoddir Auto-Pay</Text>
+              <Text style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
+                {lang === 'bn' ? 'ডিজিটাল পেমেন্ট আগে লিংক করে রাখলে ট্রিপ শেষে অটো টাকা কাটবে। লিংক না থাকলে শুধু Cash চলবে।' : 'Link digital methods before booking for instant auto-pay after trips.'}
+              </Text>
             </View>
 
             {linkingMethod ? (
               <View style={styles.linkBox}>
-                <Text style={{ fontSize: 17, fontWeight: '800', marginBottom: 8 }}>Link {linkingMethod} to Zoddir Merchant</Text>
-                <TextInput style={styles.input} placeholder={linkingMethod === 'CARD' ? 'Card Number (16 digits)' : `${linkingMethod} Number (017...)`} keyboardType="number-pad" value={linkNum} onChangeText={setLinkNum} />
-                <TextInput style={styles.input} placeholder={linkingMethod === 'CARD' ? 'CVV / Expiry (e.g. 12/28)' : 'Agreement OTP / PIN (Test: 1234)'} secureTextEntry value={linkPin} onChangeText={setLinkPin} />
+                <Text style={{ fontSize: 17, fontWeight: '800', marginBottom: 8 }}>Link {linkingMethod}</Text>
+                <TextInput style={styles.input} placeholder={linkingMethod === 'CARD' ? 'Card Number (16 digits)' : `${linkingMethod} Number`} keyboardType="number-pad" value={linkNum} onChangeText={setLinkNum} />
+                <TextInput style={styles.input} placeholder={linkingMethod === 'CARD' ? 'CVV / Expiry' : 'Verification PIN'} secureTextEntry value={linkPin} onChangeText={setLinkPin} />
                 <View style={{ flexDirection: 'row', gap: 10 }}>
                   <TouchableOpacity style={[styles.gChip, { flex: 1 }]} onPress={() => setLinkingMethod(null)}><Text style={{ fontWeight: '700' }}>Cancel</Text></TouchableOpacity>
                   <TouchableOpacity style={[styles.tealBtnSmall, { flex: 2, alignItems: 'center' }]} onPress={linkDigitalAccount} disabled={loading}>
@@ -141,12 +149,7 @@ export default function AccountModal({
             ) : (
               <>
                 <Text style={styles.sectionH}>{t.paymentMethods}</Text>
-                {[
-                  { k: 'CASH', label: 'Cash', sub: 'Pay cash directly to driver' },
-                  { k: 'BKASH', label: 'bKash', sub: user?.bkash_linked ? `Linked: ${user.bkash_number}` : 'Not linked • Tap to link bKash' },
-                  { k: 'NAGAD', label: 'Nagad', sub: user?.nagad_linked ? `Linked: ${user.nagad_number}` : 'Not linked • Tap to link Nagad' },
-                  { k: 'CARD', label: 'Credit / Debit Card', sub: user?.card_linked ? `Card •••• ${user.card_last4}` : 'Not linked • Tap to add Card' }
-                ].map((m) => {
+                {allMethods.map((m) => {
                   const linked = isLinked(m.k);
                   return (
                     <TouchableOpacity key={m.k} style={styles.payRow} onPress={() => {
@@ -205,22 +208,20 @@ export default function AccountModal({
                 <View>
                   <TouchableOpacity onPress={pickPhoto} style={{ alignSelf: 'center', marginVertical: 14, alignItems: 'center' }}>
                     {avatar ? <Image source={{ uri: avatar }} style={styles.bigAvatar} /> : <View style={styles.bigAvatarPlaceholder}><Ionicons name="person" size={44} color="#00D2B8" /></View>}
-                    <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 13, marginTop: 6 }}>Change Photo</Text>
+                    <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 13, marginTop: 6 }}>{lang === 'bn' ? 'ছবি পরিবর্তন করুন' : 'Change Photo'}</Text>
                   </TouchableOpacity>
-                  <Text style={styles.lbl}>Name</Text><TextInput style={styles.input} value={name} onChangeText={setName} />
-                  <Text style={styles.lbl}>Phone</Text><TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+                  <Text style={styles.lbl}>{t.fullName}</Text><TextInput style={styles.input} value={name} onChangeText={setName} />
+                  <Text style={styles.lbl}>{t.mobilePh}</Text><TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
                   <Text style={styles.lbl}>Email</Text><TextInput style={styles.input} value={email} onChangeText={setEmail} />
-                  <TouchableOpacity style={styles.navyBtnFull} onPress={savePersonalInfo} disabled={loading}>
-                    <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 15 }}>{t.saveChanges}</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.navyBtnFull} onPress={savePersonalInfo} disabled={loading}><Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 15 }}>{t.saveChanges}</Text></TouchableOpacity>
                 </View>
               )}
               {accTab === 'Security' && (
                 <View>
                   <Text style={styles.bigTitle}>{t.security}</Text>
                   <TextInput style={styles.input} placeholder="Current password" secureTextEntry value={oldPass} onChangeText={setOldPass} />
-                  <TextInput style={styles.input} placeholder="New password" secureTextEntry value={newPass} onChangeText={setNewPass} />
-                  <TouchableOpacity style={styles.navyBtnFull} onPress={changePass}><Text style={{ color: '#00D2B8', fontWeight: '800' }}>Update Password</Text></TouchableOpacity>
+                  <TextInput style={styles.input} placeholder={t.newPassPh} secureTextEntry value={newPass} onChangeText={setNewPass} />
+                  <TouchableOpacity style={styles.navyBtnFull} onPress={changePass}><Text style={{ color: '#00D2B8', fontWeight: '800' }}>{t.resetBtn}</Text></TouchableOpacity>
                 </View>
               )}
               {accTab === 'Privacy' && (
@@ -228,12 +229,8 @@ export default function AccountModal({
                   <Text style={styles.bigTitle}>{t.settings}</Text>
                   <Text style={[styles.lbl, { marginTop: 12 }]}>{t.language}</Text>
                   <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
-                    <TouchableOpacity onPress={() => setLang('en')} style={[styles.gChip, lang === 'en' && { backgroundColor: '#0F172A' }]}>
-                      <Text style={{ color: lang === 'en' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>English (Default)</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setLang('bn')} style={[styles.gChip, lang === 'bn' && { backgroundColor: '#0F172A' }]}>
-                      <Text style={{ color: lang === 'bn' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>বাংলা (Bangladesh)</Text>
-                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setLang('en')} style={[styles.gChip, lang === 'en' && { backgroundColor: '#0F172A' }]}><Text style={{ color: lang === 'en' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>English</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => setLang('bn')} style={[styles.gChip, lang === 'bn' && { backgroundColor: '#0F172A' }]}><Text style={{ color: lang === 'bn' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>বাংলা</Text></TouchableOpacity>
                   </View>
                   <TouchableOpacity style={[styles.navyBtnFull, { backgroundColor: '#ffe4e6', marginTop: 12 }]} onPress={() => { onClose(); onLogout(); }}>
                     <Text style={{ color: '#e11d48', fontWeight: '800', fontSize: 15 }}>{t.logout}</Text>
@@ -256,7 +253,7 @@ const styles = StyleSheet.create({
   tabRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#e2e8f0' },
   tabItem: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   tabItemActive: { borderBottomWidth: 3, borderColor: '#00D2B8' },
-  tabTxt: { fontSize: 12, color: '#64748b', fontWeight: '600' },
+  tabTxt: { fontSize: 11, color: '#64748b', fontWeight: '600' },
   bigAvatar: { width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: '#00D2B8' },
   bigAvatarPlaceholder: { width: 88, height: 88, borderRadius: 44, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
   bigTitle: { fontSize: 24, fontWeight: '800', color: '#0F172A', marginBottom: 6 },

@@ -17,6 +17,17 @@ import { STRINGS } from './i18n';
 const API = 'https://uber-bd-platform.onrender.com';
 const TOP_PAD = Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 48;
 
+const COUNTRIES = [
+  { name: 'Bangladesh', code: '+880', flag: '🇧🇩' },
+  { name: 'India', code: '+91', flag: '🇮🇳' },
+  { name: 'Saudi Arabia', code: '+966', flag: '🇸🇦' },
+  { name: 'UAE', code: '+971', flag: '🇦🇪' },
+  { name: 'Malaysia', code: '+60', flag: '🇲🇾' },
+  { name: 'Singapore', code: '+65', flag: '🇸🇬' },
+  { name: 'United Kingdom', code: '+44', flag: '🇬🇧' },
+  { name: 'United States', code: '+1', flag: '🇺🇸' }
+];
+
 try {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: true })
@@ -57,7 +68,10 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState('');
   const [isRegister, setIsRegister] = useState(false);
+  const [country, setCountry] = useState(COUNTRIES[0]);
+  const [countryModal, setCountryModal] = useState(false);
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [regVehicle, setRegVehicle] = useState('BIKE');
@@ -65,13 +79,20 @@ export default function App() {
   const [multiVehicles, setMultiVehicles] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // Forgot Password
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [fEmail, setFEmail] = useState('');
+  const [fCode, setFCode] = useState('');
+  const [fNewPass, setFNewPass] = useState('');
+  const [fSent, setFSent] = useState(false);
+
   const [tab, setTab] = useState('HOME');
   const [menuScreen, setMenuScreen] = useState(null);
-  const [inboxTab, setInboxTab] = useState('NOTIF');
   const [nightMode, setNightMode] = useState(false);
 
   const [isOnline, setIsOnline] = useState(false);
   const [driverLoc, setDriverLoc] = useState({ lat: 23.8103, lng: 90.4125, accuracy: 10 });
+  const driverLocRef = useRef({ lat: 23.8103, lng: 90.4125, accuracy: 10 });
   const [recenterCount, setRecenterCount] = useState(0);
   const [availableRides, setAvailableRides] = useState([]);
   const [skippedIds, setSkippedIds] = useState([]);
@@ -80,6 +101,10 @@ export default function App() {
   const [routeCoords, setRouteCoords] = useState([]);
   const [tripSec, setTripSec] = useState(0);
   const [tripReceipt, setTripReceipt] = useState(null);
+
+  // 4-Digit Start PIN Modal
+  const [pinModal, setPinModal] = useState(false);
+  const [riderPinInput, setRiderPinInput] = useState('');
 
   const [wallet, setWallet] = useState({ balance: 0, total_earned: 0, total_withdrawn: 0 });
   const [txns, setTxns] = useState([]);
@@ -128,7 +153,7 @@ export default function App() {
 
   useEffect(() => {
     if (!activeRide) return setRouteCoords([]);
-    const from = activeRide.status === 'ACCEPTED' ? driverLoc : { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng };
+    const from = activeRide.status === 'ACCEPTED' ? driverLocRef.current : { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng };
     const to = activeRide.status === 'ACCEPTED' ? { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng } : { lat: activeRide.drop_lat, lng: activeRide.drop_lng };
     axios.get(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`)
       .then((r) => { if (r.data.routes?.length) setRouteCoords(r.data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng])); })
@@ -182,15 +207,19 @@ export default function App() {
     loadWallet(); loadQuests();
     const socket = io(API, { transports: ['websocket'] });
     socket.on('connect', () => socket.emit('join_room', { role: 'DRIVER', userId: user.id }));
-    socket.on('new_ride_request', (ride) => { setAvailableRides((prev) => [ride, ...prev.filter((r) => r.id !== ride.id)]); triggerRidePopup(ride); });
-    socket.on('ride_cancelled', () => { setActiveRide(null); Alert.alert('Cancelled', 'Rider cancelled the trip'); });
+    socket.on('new_ride_request', (ride) => {
+      setAvailableRides((prev) => [ride, ...prev.filter((r) => r.id !== ride.id)]);
+      triggerRidePopup(ride);
+    });
+    socket.on('ride_cancelled', () => { setActiveRide(null); setPinModal(false); Alert.alert('Cancelled', 'Rider cancelled the trip'); });
 
-    const gpsTimer = setInterval(async () => {
+    const updateGpsNow = async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude, accuracy: loc.coords.accuracy || 10 };
+          driverLocRef.current = coords;
           setDriverLoc(coords);
           if (isOnline) {
             socket.emit('driver_location_update', {
@@ -202,16 +231,25 @@ export default function App() {
           }
         }
       } catch {}
-    }, 4000);
+    };
+    updateGpsNow();
+    const gpsTimer = setInterval(updateGpsNow, 4000);
 
+    // BUG FIX: ব্যবহার করছে driverLocRef.current যাতে Go ও Premium অফার সাথে সাথে কেটে না যায়!
     const pollTimer = setInterval(async () => {
       try {
         const act = await axios.get(`${API}/api/rides/my-active`, { headers: { Authorization: `Bearer ${token}` } });
         setActiveRide(act.data.ride || null);
         if (isOnline && !act.data.ride) {
-          const av = await axios.get(`${API}/api/rides/available?lat=${driverLoc.lat}&lng=${driverLoc.lng}`, { headers: { Authorization: `Bearer ${token}` } });
-          setAvailableRides(av.data.rides || []);
-          if (av.data.rides?.length) triggerRidePopup(av.data.rides[0]);
+          const curLoc = driverLocRef.current;
+          const av = await axios.get(`${API}/api/rides/available?lat=${curLoc.lat}&lng=${curLoc.lng}`, { headers: { Authorization: `Bearer ${token}` } });
+          const fetched = av.data.rides || [];
+          setAvailableRides((prev) => {
+            const ids = new Set(fetched.map((x) => x.id));
+            const merged = [...fetched, ...prev.filter((x) => !ids.has(x.id))];
+            return merged.filter((x) => ids.has(x.id) || (Date.now() - new Date(x.created_at).getTime() < 12000));
+          });
+          if (fetched.length) triggerRidePopup(fetched[0]);
         }
       } catch {}
     }, 4000);
@@ -224,19 +262,39 @@ export default function App() {
     setLoading(true);
     try {
       const ep = isRegister ? '/api/auth/register' : '/api/auth/login';
+      const formattedPhone = phone.startsWith('+') ? phone : `${country.code}${phone.replace(/^0+/, '')}`;
       const payload = isRegister
-        ? { name: name || 'Driver', phone, password, role: 'DRIVER', vehicle_type: regVehicle, plate_number: regPlate }
-        : { phone, password, role: 'DRIVER', vehicle_type: chosenVehicle || undefined };
+        ? { name: name || 'Driver', email, phone: formattedPhone, password, role: 'DRIVER', vehicle_type: regVehicle, plate_number: regPlate }
+        : { phone, dial_code: country.code, password, role: 'DRIVER', vehicle_type: chosenVehicle || undefined };
       const res = await axios.post(`${API}${ep}`, payload);
-      if (res.data.choose_vehicle) {
-        setMultiVehicles(res.data.vehicles);
-        setLoading(false);
-        return;
-      }
+      if (res.data.choose_vehicle) { setMultiVehicles(res.data.vehicles); setLoading(false); return; }
       setMultiVehicles([]);
       setToken(res.data.token); setUser(res.data.user);
       setIsOnline(!!res.data.user?.driverProfile?.is_online);
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Auth failed'); }
+    setLoading(false);
+  };
+
+  const sendForgotCode = async () => {
+    if (!fEmail) return Alert.alert('Required', 'Enter your email address');
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/api/auth/forgot-password`, { email: fEmail, role: 'DRIVER' });
+      setFSent(true);
+      if (res.data.test_code) Alert.alert('Verification Code (Test)', `Your 6-digit code is: ${res.data.test_code}`);
+      else Alert.alert('Sent', res.data.message);
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
+    setLoading(false);
+  };
+
+  const submitResetPassword = async () => {
+    if (!fCode || !fNewPass) return Alert.alert('Required', 'Enter code & new password');
+    setLoading(true);
+    try {
+      await axios.post(`${API}/api/auth/reset-password`, { email: fEmail, role: 'DRIVER', code: fCode, new_password: fNewPass });
+      Alert.alert('Success', 'Password reset successful!');
+      setForgotOpen(false); setFSent(false); setFCode(''); setFNewPass('');
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Invalid code'); }
     setLoading(false);
   };
 
@@ -263,12 +321,14 @@ export default function App() {
     try { await axios.post(`${API}/api/rides/${id}/decline`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch {}
   };
 
-  const startRide = async () => {
+  const verifyPinAndStart = async () => {
+    if (!riderPinInput || riderPinInput.length < 4) return Alert.alert('PIN Required', 'Enter 4-digit Rider PIN');
     setLoading(true);
     try {
-      const res = await axios.post(`${API}/api/rides/${activeRide.id}/start`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.post(`${API}/api/rides/${activeRide.id}/start`, { pin: riderPinInput }, { headers: { Authorization: `Bearer ${token}` } });
       setActiveRide({ ...activeRide, ...res.data.ride });
-    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
+      setPinModal(false); setRiderPinInput('');
+    } catch (err) { Alert.alert('Wrong PIN', err.response?.data?.error || 'Invalid PIN'); }
     setLoading(false);
   };
 
@@ -277,7 +337,7 @@ export default function App() {
     try {
       const res = await axios.post(`${API}/api/rides/${activeRide.id}/complete`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setTripReceipt({ ...res.data.ride, new_balance: res.data.wallet_balance });
-      setActiveRide(null); // কোনো ওয়েট ছাড়াই ট্রিপ শেষ!
+      setActiveRide(null);
       loadWallet(); loadQuests();
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
@@ -294,8 +354,9 @@ export default function App() {
         <ScrollView style={{ padding: 22 }}>
           {isRegister && (
             <>
-              <TextInput style={styles.input} placeholder="Full Name" value={name} onChangeText={setName} />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>Select Vehicle ID (You can open multiple with same phone):</Text>
+              <TextInput style={styles.input} placeholder={t.fullName} value={name} onChangeText={setName} />
+              <TextInput style={styles.input} placeholder={t.emailPh} keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>{t.selectVehType}</Text>
               <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
                 {['BIKE', 'CNG', 'CAR', 'XL'].map((v) => (
                   <TouchableOpacity key={v} onPress={() => setRegVehicle(v)} style={[styles.vChip, regVehicle === v && { backgroundColor: '#0F172A' }]}>
@@ -303,15 +364,26 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TextInput style={styles.input} placeholder="Plate Number (DHM-GA-...)" value={regPlate} onChangeText={setRegPlate} />
+              <TextInput style={styles.input} placeholder={t.platePh} value={regPlate} onChangeText={setRegPlate} />
             </>
           )}
-          <TextInput style={styles.input} placeholder="Mobile (017...)" keyboardType="phone-pad" value={phone} onChangeText={(tx) => { setPhone(tx); setMultiVehicles([]); }} />
-          <TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+          <View style={styles.phoneRow}>
+            <TouchableOpacity style={styles.flagBox} onPress={() => setCountryModal(true)}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>{country.flag} {country.code} ▾</Text>
+            </TouchableOpacity>
+            <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder={t.mobilePh} keyboardType="phone-pad" value={phone} onChangeText={(tx) => { setPhone(tx); setMultiVehicles([]); }} />
+          </View>
+          <TextInput style={[styles.input, { marginTop: 12 }]} placeholder={t.passPh} secureTextEntry value={password} onChangeText={setPassword} />
+
+          {!isRegister && (
+            <TouchableOpacity onPress={() => setForgotOpen(true)} style={{ alignSelf: 'flex-end', marginBottom: 8 }}>
+              <Text style={{ color: '#00D2B8', fontWeight: '700', fontSize: 13 }}>{t.forgotPass}</Text>
+            </TouchableOpacity>
+          )}
 
           {multiVehicles.length > 0 && (
             <View style={{ marginBottom: 12 }}>
-              <Text style={{ fontWeight: '800', color: '#0F172A', marginBottom: 6 }}>Multiple IDs found! Select Vehicle to Sign In:</Text>
+              <Text style={{ fontWeight: '800', color: '#0F172A', marginBottom: 6 }}>Select Vehicle ID:</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {multiVehicles.map((mv) => (
                   <TouchableOpacity key={mv} style={[styles.vChip, { backgroundColor: '#00D2B8' }]} onPress={() => handleAuth(mv)}>
@@ -329,6 +401,41 @@ export default function App() {
             <Text style={{ color: '#00D2B8', fontWeight: '800' }}>{isRegister ? t.haveAcc : t.newAcc}</Text>
           </TouchableOpacity>
         </ScrollView>
+
+        <Modal visible={countryModal} transparent animationType="slide">
+          <View style={styles.modalBg}>
+            <View style={styles.receiptCard}>
+              <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 10 }}>{t.selectCountry}</Text>
+              <ScrollView style={{ maxHeight: 300 }}>
+                {COUNTRIES.map((c) => (
+                  <TouchableOpacity key={c.code} style={{ paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' }} onPress={() => { setCountry(c); setCountryModal(false); }}>
+                    <Text style={{ fontSize: 16, fontWeight: '700' }}>{c.flag}  {c.name} ({c.code})</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <TouchableOpacity style={[styles.navyBtn, { marginTop: 10 }]} onPress={() => setCountryModal(false)}><Text style={styles.navyBtnTxt}>Close</Text></TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={forgotOpen} transparent animationType="slide">
+          <View style={styles.modalBg}>
+            <View style={styles.receiptCard}>
+              <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 10 }}>{t.resetTitle}</Text>
+              <TextInput style={styles.input} placeholder={t.emailPh} keyboardType="email-address" autoCapitalize="none" value={fEmail} onChangeText={setFEmail} />
+              {!fSent ? (
+                <TouchableOpacity style={styles.navyBtn} onPress={sendForgotCode} disabled={loading}><Text style={styles.navyBtnTxt}>{t.sendCode}</Text></TouchableOpacity>
+              ) : (
+                <>
+                  <TextInput style={styles.input} placeholder={t.codePh} keyboardType="number-pad" value={fCode} onChangeText={setFCode} />
+                  <TextInput style={styles.input} placeholder={t.newPassPh} secureTextEntry value={fNewPass} onChangeText={setFNewPass} />
+                  <TouchableOpacity style={styles.navyBtn} onPress={submitResetPassword} disabled={loading}><Text style={styles.navyBtnTxt}>{t.resetBtn}</Text></TouchableOpacity>
+                </>
+              )}
+              <TouchableOpacity style={{ padding: 12, alignItems: 'center' }} onPress={() => setForgotOpen(false)}><Text style={{ fontWeight: '700' }}>Close</Text></TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -424,10 +531,15 @@ export default function App() {
                       </View>
                     </View>
                     {activeRide.status === 'ACCEPTED' && (
-                      <TouchableOpacity style={styles.tealGoBtn} onPress={startRide} disabled={loading}><Ionicons name="play-circle" size={22} color="#0F172A" /><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 16 }}>{t.startTrip}</Text></TouchableOpacity>
+                      <TouchableOpacity style={styles.tealGoBtn} onPress={() => setPinModal(true)} disabled={loading}>
+                        <Ionicons name="key" size={20} color="#0F172A" />
+                        <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 16 }}>{t.startTrip} (PIN)</Text>
+                      </TouchableOpacity>
                     )}
                     {activeRide.status === 'STARTED' && (
-                      <TouchableOpacity style={[styles.tealGoBtn, { backgroundColor: '#e11d48' }]} onPress={completeRide} disabled={loading}><Ionicons name="flag" size={20} color="#fff" /><Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{t.completeTrip}</Text></TouchableOpacity>
+                      <TouchableOpacity style={[styles.tealGoBtn, { backgroundColor: '#e11d48' }]} onPress={completeRide} disabled={loading}>
+                        <Ionicons name="flag" size={20} color="#fff" /><Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{t.completeTrip}</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
                 ) : !isOnline ? (
@@ -521,7 +633,7 @@ export default function App() {
         <ScrollView style={{ flex: 1, padding: 20, paddingTop: TOP_PAD }}>
           <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 24 }} onPress={() => setMenuScreen('PROFILE')}>
             {user.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: 62, height: 62, borderRadius: 31, borderWidth: 2, borderColor: '#00D2B8' }} /> : <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }}><Ionicons name="person" size={28} color="#00D2B8" /></View>}
-            <View><Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{user.name}</Text><Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>{dp.vehicle_type} • Profile & Photo →</Text></View>
+            <View><Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{user.name}</Text><Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>{dp.vehicle_type} • Profile →</Text></View>
           </TouchableOpacity>
           {[
             { lbl: t.referEarn, fn: () => setMenuScreen('REFER') },
@@ -546,15 +658,31 @@ export default function App() {
           const active = tab === item.k;
           return (
             <TouchableOpacity key={item.k} style={styles.navItem} onPress={() => { setTab(item.k); if (item.fn) item.fn(); }}>
-              <View>
-                <Ionicons name={active ? item.icon : `${item.icon}-outline`} size={22} color={active ? '#00D2B8' : '#94a3b8'} />
-                {item.badge > 0 && <View style={styles.navBadge}><Text style={{ color: '#0F172A', fontSize: 9, fontWeight: '900' }}>{item.badge}</Text></View>}
-              </View>
+              <View><Ionicons name={active ? item.icon : `${item.icon}-outline`} size={22} color={active ? '#00D2B8' : '#94a3b8'} />{item.badge > 0 && <View style={styles.navBadge}><Text style={{ color: '#0F172A', fontSize: 9, fontWeight: '900' }}>{item.badge}</Text></View>}</View>
               <Text style={{ fontSize: 10, fontWeight: active ? '800' : '600', color: active ? '#00D2B8' : '#94a3b8', marginTop: 2 }}>{item.lbl}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
+
+      {/* 4-DIGIT RIDER PIN MODAL TO START TRIP */}
+      <Modal visible={pinModal} transparent animationType="slide">
+        <View style={styles.modalBg}>
+          <View style={styles.receiptCard}>
+            <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A', textAlign: 'center' }}>{t.enterPinTitle}</Text>
+            <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 4, marginBottom: 14 }}>{t.enterPinSub}</Text>
+            <TextInput
+              style={[styles.input, { textAlign: 'center', fontSize: 26, fontWeight: '900', letterSpacing: 10 }]}
+              placeholder="••••" maxLength={4} keyboardType="number-pad"
+              value={riderPinInput} onChangeText={setRiderPinInput}
+            />
+            <TouchableOpacity style={styles.navyBtn} onPress={verifyPinAndStart} disabled={loading}>
+              {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>{t.verifyStartBtn}</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={{ padding: 12, alignItems: 'center' }} onPress={() => setPinModal(false)}><Text style={{ fontWeight: '700' }}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={!!tripReceipt} transparent animationType="fade">
         <View style={styles.modalBg}>
@@ -587,8 +715,10 @@ export default function App() {
 
 const styles = StyleSheet.create({
   authWrap: { flex: 1, backgroundColor: '#fff' },
-  authBanner: { height: 220, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
+  authBanner: { height: 210, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
   input: { backgroundColor: '#f1f5f9', padding: 14, borderRadius: 12, marginBottom: 12, fontSize: 15 },
+  phoneRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  flagBox: { backgroundColor: '#f1f5f9', padding: 13, borderRadius: 12 },
   vChip: { flex: 1, backgroundColor: '#f1f5f9', padding: 12, borderRadius: 10, alignItems: 'center' },
   navyBtn: { backgroundColor: '#0F172A', padding: 15, borderRadius: 14, alignItems: 'center', marginTop: 6 },
   navyBtnTxt: { color: '#00D2B8', fontWeight: '800', fontSize: 15 },
@@ -612,8 +742,6 @@ const styles = StyleSheet.create({
   timerBadge: { backgroundColor: '#00D2B8', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   countTrack: { height: 4, backgroundColor: '#1e293b', borderRadius: 4, overflow: 'hidden' },
   countFill: { height: 4, backgroundColor: '#A3E635' },
-  skipBtn: { flex: 1, backgroundColor: '#1e293b', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
-  acceptBtn: { flex: 2, backgroundColor: '#00D2B8', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   stepRow: { flexDirection: 'row', gap: 6 },
   stepPill: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 6, borderRadius: 10, alignItems: 'center' },
   liveTimerBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0F172A', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
