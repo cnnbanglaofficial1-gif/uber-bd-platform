@@ -19,10 +19,10 @@ export function PaymentLogo({ method, size = 38 }) {
       </View>
     );
   }
-  if (method === 'BANK') {
+  if (method === 'CARD') {
     return (
-      <View style={[styles.badge, { width: size, height: size, borderRadius: size * 0.28, backgroundColor: '#0F172A' }]}>
-        <MaterialCommunityIcons name="bank" size={size * 0.54} color="#00D2B8" />
+      <View style={[styles.badge, { width: size, height: size, borderRadius: size * 0.28, backgroundColor: '#1E293B' }]}>
+        <Ionicons name="card" size={size * 0.54} color="#00D2B8" />
       </View>
     );
   }
@@ -35,5 +35,5 @@ export function PaymentLogo({ method, size = 38 }) {
 
 const styles = StyleSheet.create({
   badge: { alignItems: 'center', justifyContent: 'center', elevation: 2 },
-  tinyTxt: { color: '#fff', fontSize: 7, fontWeight: '900', marginTop: -2, letterSpacing: -0.2 }
+  tinyTxt: { color: '#fff', fontSize: 7, fontWeight: '900', marginTop: -2 }
 });

@@ -9,7 +9,7 @@ import axios from 'axios';
 import { PaymentLogo } from './BrandIcons';
 import { STRINGS } from './i18n';
 
-const BRANDS = ['Toyota', 'Honda', 'Suzuki', 'Yamaha', 'Bajaj', 'TVS', 'Hero', 'Hyundai'];
+const BRANDS = ['Toyota', 'Honda', 'Suzuki', 'Yamaha', 'Bajaj', 'TVS', 'Noah', 'HiAce'];
 const YEARS = ['2026', '2025', '2024', '2023', '2022', '2020', '2018', '2015', '2010', '2005'];
 
 export default function DriverMenus({
@@ -27,19 +27,16 @@ export default function DriverMenus({
   const [vPlate, setVPlate] = useState(dp.plate_number || '');
   const [vLicense, setVLicense] = useState(dp.license_number || '');
 
-  const [docTarget, setDocTarget] = useState('NID');
-  const [nidPhoto, setNidPhoto] = useState(dp.nid_photo || null);
-  const [licensePhoto, setLicensePhoto] = useState(dp.license_photo || null);
-  const [vehiclePhoto, setVehiclePhoto] = useState(dp.vehicle_paper_photo || null);
+  const [docTarget, setDocTarget] = useState('');
+  const [docsJson, setDocsJson] = useState(dp.docs_json || {});
+  const [requiredDocs, setRequiredDocs] = useState([]);
 
   const [pName, setPName] = useState(user?.name || '');
   const [pPhone, setPPhone] = useState(user?.phone || '');
   const [pBkash, setPBkash] = useState(user?.bkash_number || '');
   const [pNagad, setPNagad] = useState(user?.nagad_number || '');
   const [pAvatar, setPAvatar] = useState(user?.avatar_url || null);
-  const [accTab, setAccTab] = useState('Home');
 
-  // Withdraw & Due Payment
   const [wAmount, setWAmount] = useState('');
   const [wMethod, setWMethod] = useState('BKASH');
   const [wNumber, setWNumber] = useState('');
@@ -48,8 +45,7 @@ export default function DriverMenus({
   const [dueTrx, setDueTrx] = useState('');
   const [pubSettings, setPubSettings] = useState({});
 
-  // 30-Day Earnings & Trips Detail
-  const [earnSubTab, setEarnSubTab] = useState('DAILY'); // 'DAILY' | 'TRIPS'
+  const [earnSubTab, setEarnSubTab] = useState('DAILY');
   const [dailyList, setDailyList] = useState([]);
   const [tripList, setTripList] = useState([]);
 
@@ -63,12 +59,16 @@ export default function DriverMenus({
     if (dp) {
       setVType(dp.vehicle_type || 'BIKE'); setVModel(dp.vehicle_model || '');
       setVPlate(dp.plate_number || ''); setVLicense(dp.license_number || '');
-      setNidPhoto(dp.nid_photo || null); setLicensePhoto(dp.license_photo || null);
-      setVehiclePhoto(dp.vehicle_paper_photo || null);
+      setDocsJson(dp.docs_json || {});
     }
     if (Number(wallet?.balance) < 0) setDueAmount(String(Math.abs(Number(wallet.balance)).toFixed(2)));
-    if (screen === 'WALLET' || screen === 'PAY_DUE') {
-      axios.get(`${API}/api/settings/public`).then((r) => setPubSettings(r.data || {})).catch(() => {});
+    if (screen) {
+      axios.get(`${API}/api/settings/public`).then((r) => {
+        setPubSettings(r.data || {});
+        const map = r.data?.required_docs || {};
+        const vt = dp.vehicle_type || 'BIKE';
+        setRequiredDocs(map[vt] || ['Vehicle Registration', 'National ID (NID)', 'Driving License']);
+      }).catch(() => {});
     }
     if (screen === 'EARNINGS_DETAIL' && token) {
       axios.get(`${API}/api/driver/earnings-detail`, { headers: { Authorization: `Bearer ${token}` } })
@@ -85,9 +85,7 @@ export default function DriverMenus({
         avatar_url: extra.avatar_url !== undefined ? extra.avatar_url : pAvatar,
         bkash_number: pBkash, nagad_number: pNagad,
         vehicle_type: vType, vehicle_model: extra.vehicle_model || vModel, plate_number: vPlate, license_number: vLicense,
-        nid_photo: extra.nid_photo || nidPhoto,
-        license_photo: extra.license_photo || licensePhoto,
-        vehicle_paper_photo: extra.vehicle_paper_photo || vehiclePhoto
+        docs_json: extra.docs_json || undefined
       }, { headers: { Authorization: `Bearer ${token}` } });
       await onRefreshUser();
       Alert.alert('Saved', lang === 'bn' ? 'তথ্য সংরক্ষণ হয়েছে!' : 'Profile updated!');
@@ -105,11 +103,12 @@ export default function DriverMenus({
       const res = await fn({ mediaTypes: ['images'], allowsEditing: true, quality: 0.25, base64: true });
       if (!res.canceled && res.assets[0]?.base64) {
         const b64 = `data:image/jpeg;base64,${res.assets[0].base64}`;
-        if (docTarget === 'AVATAR') { setPAvatar(b64); await saveAll({ avatar_url: b64 }); setScreen('PROFILE'); }
-        else {
-          if (docTarget === 'NID') { setNidPhoto(b64); await saveAll({ nid_photo: b64 }); }
-          else if (docTarget === 'LICENSE') { setLicensePhoto(b64); await saveAll({ license_photo: b64 }); }
-          else { setVehiclePhoto(b64); await saveAll({ vehicle_paper_photo: b64 }); }
+        if (docTarget === 'AVATAR') {
+          setPAvatar(b64); await saveAll({ avatar_url: b64 }); setScreen('PROFILE');
+        } else {
+          const updated = { ...docsJson, [docTarget]: b64 };
+          setDocsJson(updated);
+          await saveAll({ docs_json: { [docTarget]: b64 } });
           setScreen('DOCUMENTS');
         }
       }
@@ -128,11 +127,11 @@ export default function DriverMenus({
   };
 
   const submitDuePay = async () => {
-    if (!dueAmount || !dueTrx) return Alert.alert('Required', 'Enter amount and Transaction ID (TrxID)');
+    if (!dueAmount || !dueTrx) return Alert.alert('Required', 'Enter amount & TrxID');
     setLoading(true);
     try {
       await axios.post(`${API}/api/driver/pay-due`, { amount: Number(dueAmount), method: dueMethod, trx_id: dueTrx }, { headers: { Authorization: `Bearer ${token}` } });
-      Alert.alert('Submitted', 'আপনার পেমেন্ট জমা হয়েছে! অ্যাডমিন যাচাই করে মাইনাস ব্যালেন্স ক্লিয়ার করবেন।');
+      Alert.alert('Submitted', 'Payment submitted! Admin will clear your balance shortly.');
       setDueTrx(''); onReloadWallet(); setScreen('WALLET');
     } catch (err) { Alert.alert('Failed', err.response?.data?.error || 'Error'); }
     setLoading(false);
@@ -144,7 +143,6 @@ export default function DriverMenus({
     <Modal visible={!!screen} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.container, nightMode && { backgroundColor: '#0F172A' }]}>
 
-        {/* ১. ACCOUNT MENU */}
         {screen === 'ACCOUNT' && (
           <ScrollView style={{ flex: 1 }}>
             <View style={styles.header}>
@@ -155,8 +153,7 @@ export default function DriverMenus({
               { lbl: t.vehicles, sub: `${dp.vehicle_model || dp.vehicle_type} • ${dp.plate_number || ''}`, icon: 'car-cog', to: 'VEHICLES' },
               { lbl: t.documents, icon: 'file-document-check', to: 'DOCUMENTS' },
               { lbl: 'Wallet & Payouts', icon: 'wallet', to: 'WALLET' },
-              { lbl: 'Manage Zoddir Account', icon: 'account-cog', to: 'MANAGE_ACCOUNT' },
-              { lbl: 'Public Profile', icon: 'card-account-details', to: 'PUBLIC_PROFILE' },
+              { lbl: 'Personal Info & Payout Numbers', icon: 'account-cog', to: 'MANAGE_ACCOUNT' },
               { lbl: t.settings, icon: 'cog', to: 'SETTINGS' }
             ].map((item) => (
               <TouchableOpacity key={item.lbl} style={styles.menuRow} onPress={() => setScreen(item.to)}>
@@ -174,28 +171,24 @@ export default function DriverMenus({
           </ScrollView>
         )}
 
-        {/* ২. VEHICLES & ADD VEHICLE */}
         {screen === 'VEHICLES' && (
           <View style={{ flex: 1 }}>
             <View style={styles.topNav}>
               <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
               <Text style={styles.navTitle}>{t.vehicles}</Text>
               <TouchableOpacity style={styles.addVehBtn} onPress={() => setScreen('ADD_VEHICLE')}>
-                <Ionicons name="add" size={16} color="#0F172A" /><Text style={{ color: '#0F172A', fontWeight: '800', fontSize: 12 }}>Add/Edit</Text>
+                <Ionicons name="create-outline" size={16} color="#0F172A" /><Text style={{ color: '#0F172A', fontWeight: '800', fontSize: 12 }}>Edit</Text>
               </TouchableOpacity>
             </View>
             <ScrollView style={{ padding: 20 }}>
               <TouchableOpacity style={styles.vehCard} onPress={() => setScreen('DOCUMENTS')}>
-                <MaterialCommunityIcons name={dp.vehicle_type === 'BIKE' ? 'motorbike' : 'car-side'} size={36} color="#0F172A" />
+                <MaterialCommunityIcons name={dp.vehicle_type === 'BIKE' ? 'motorbike' : dp.vehicle_type === 'XL' ? 'van-passenger' : 'car-side'} size={36} color="#0F172A" />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{dp.vehicle_model || dp.vehicle_type}</Text>
                   <Text style={{ fontSize: 13, color: '#64748b' }}>{dp.plate_number || 'No Plate'}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                    <Ionicons name={dp.is_approved ? 'checkmark-circle' : 'time'} size={15} color={dp.is_approved ? '#059669' : '#d97706'} />
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: dp.is_approved ? '#059669' : '#d97706' }}>
-                      {dp.is_approved ? 'Approved' : 'Pending Approval'} {dp.allow_premium ? '• Premium Active' : ''}
-                    </Text>
-                  </View>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: dp.is_approved ? '#059669' : '#d97706', marginTop: 2 }}>
+                    {dp.is_approved ? 'Approved' : 'Pending Approval'} {dp.allow_premium ? '• Premium Active' : ''}
+                  </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#475569" />
               </TouchableOpacity>
@@ -207,10 +200,10 @@ export default function DriverMenus({
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('VEHICLES')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
             <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14, marginBottom: 12 }}>Vehicle Information</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-              {['BIKE', 'CNG', 'CAR'].map((vt) => (
+            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14 }}>
+              {['BIKE', 'CNG', 'CAR', 'XL'].map((vt) => (
                 <TouchableOpacity key={vt} onPress={() => setVType(vt)} style={[styles.chip, vType === vt && { backgroundColor: '#0F172A' }]}>
-                  <Text style={{ color: vType === vt ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>{vt}</Text>
+                  <Text style={{ color: vType === vt ? '#00D2B8' : '#0F172A', fontWeight: '800', fontSize: 12 }}>{vt}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -223,7 +216,7 @@ export default function DriverMenus({
               ))}
             </ScrollView>
             <TextInput style={styles.input} value={vMake} onChangeText={setVMake} />
-            <Text style={styles.lbl}>Model</Text><TextInput style={styles.input} value={vModel} onChangeText={setVModel} placeholder="Corolla / FZ-S" />
+            <Text style={styles.lbl}>Model</Text><TextInput style={styles.input} value={vModel} onChangeText={setVModel} placeholder="Noah / Corolla / FZ-S" />
             <Text style={styles.lbl}>Year (2010+ eligible for Zoddir Premium)</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
               {YEARS.map((y) => (
@@ -240,122 +233,101 @@ export default function DriverMenus({
           </ScrollView>
         )}
 
-        {/* ৩. DOCUMENTS & CAPTURE */}
+        {/* DYNAMIC DOCUMENTS FROM ADMIN PANEL */}
         {screen === 'DOCUMENTS' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 26, fontWeight: '800', marginTop: 14, marginBottom: 16 }}>{t.documents}</Text>
-            {[
-              { k: 'NID', title: 'National ID (NID)', done: !!nidPhoto },
-              { k: 'LICENSE', title: 'Driving License / Tax Token', done: !!licensePhoto },
-              { k: 'VEHICLE', title: 'Vehicle Registration Paper', done: !!vehiclePhoto }
-            ].map((d) => (
-              <TouchableOpacity key={d.k} style={styles.docRow} onPress={() => { setDocTarget(d.k); setScreen('DOC_CAPTURE'); }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A' }}>{d.title}</Text>
-                  <Text style={{ fontSize: 12, color: d.done ? '#059669' : '#00D2B8', fontWeight: '700', marginTop: 2 }}>
-                    {d.done ? 'Uploaded' : 'Tap to upload'}
-                  </Text>
-                </View>
-                <Ionicons name={d.done ? 'checkmark-circle' : 'cloud-upload-outline'} size={22} color={d.done ? '#059669' : '#00D2B8'} />
-              </TouchableOpacity>
-            ))}
+            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14 }}>{dp.vehicle_type} Required Documents</Text>
+            <Text style={{ color: '#64748b', marginBottom: 16 }}>Admin-configured document checklist for {dp.vehicle_type}</Text>
+            {requiredDocs.map((docName) => {
+              const done = !!docsJson[docName];
+              return (
+                <TouchableOpacity key={docName} style={styles.docRow} onPress={() => { setDocTarget(docName); setScreen('DOC_CAPTURE'); }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A' }}>{docName}</Text>
+                    <Text style={{ fontSize: 12, color: done ? '#059669' : '#00D2B8', fontWeight: '700', marginTop: 2 }}>
+                      {done ? 'Uploaded' : 'Tap to upload'}
+                    </Text>
+                  </View>
+                  <Ionicons name={done ? 'checkmark-circle' : 'cloud-upload-outline'} size={22} color={done ? '#059669' : '#00D2B8'} />
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         )}
 
         {screen === 'DOC_CAPTURE' && (
           <View style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen(docTarget === 'AVATAR' ? 'PROFILE' : 'DOCUMENTS')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 14 }}>Upload {docTarget}</Text>
+            <Text style={{ fontSize: 22, fontWeight: '800', marginTop: 14 }}>Upload: {docTarget}</Text>
             <View style={styles.docPreviewBox}>
-              {(docTarget === 'NID' ? nidPhoto : docTarget === 'LICENSE' ? licensePhoto : docTarget === 'AVATAR' ? pAvatar : vehiclePhoto) ? (
-                <Image source={{ uri: docTarget === 'NID' ? nidPhoto : docTarget === 'LICENSE' ? licensePhoto : docTarget === 'AVATAR' ? pAvatar : vehiclePhoto }} style={{ width: '100%', height: 220, borderRadius: 12 }} resizeMode="contain" />
+              {(docTarget === 'AVATAR' ? pAvatar : docsJson[docTarget]) ? (
+                <Image source={{ uri: docTarget === 'AVATAR' ? pAvatar : docsJson[docTarget] }} style={{ width: '100%', height: 220, borderRadius: 12 }} resizeMode="contain" />
               ) : <Ionicons name="camera-outline" size={84} color="#94a3b8" />}
             </View>
             <TouchableOpacity style={styles.grayBtn} onPress={() => captureDoc(false)}><Text style={{ fontWeight: '800' }}>Choose from Gallery</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.navyBtn} onPress={() => captureDoc(true)}><Text style={styles.navyBtnTxt}>Take Photo (Camera)</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.navyBtn} onPress={() => captureDoc(true)} disabled={loading}>
+              {loading ? <ActivityIndicator color="#00D2B8" /> : <Text style={styles.navyBtnTxt}>Take Photo (Camera)</Text>}
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* ৪. WALLET + PAY DUE + WITHDRAW */}
         {screen === 'WALLET' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 16 }}>
               <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color="#0F172A" /></TouchableOpacity>
               <Text style={{ fontSize: 22, fontWeight: '800', color: '#0F172A' }}>Zoddir Wallet</Text>
             </View>
-
             <View style={styles.walletBox}>
               <Text style={{ color: '#00D2B8', fontSize: 13, fontWeight: '700' }}>{t.walletBal}</Text>
               <Text style={{ fontSize: 34, fontWeight: '900', color: Number(wallet.balance) < 0 ? '#fb7185' : '#A3E635', marginVertical: 4 }}>{wallet.balance}৳</Text>
               <Text style={{ fontSize: 12, color: '#cbd5e1' }}>{t.totalEarnings}: {wallet.total_earned}৳ • {t.totalWithdrawn}: {wallet.total_withdrawn}৳</Text>
             </View>
-
             {Number(wallet.balance) < 0 && (
               <View style={styles.dueAlert}>
                 <Text style={{ fontWeight: '800', color: '#be123c', fontSize: 15 }}>{t.dueWarn}: ৳{Math.abs(Number(wallet.balance)).toFixed(2)}</Text>
-                <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>Cash রাইডের প্ল্যাটফর্ম কমিশন পরিশোধ করতে নিচের বাটনে চাপুন।</Text>
                 <TouchableOpacity style={[styles.navyBtn, { backgroundColor: '#e11d48', marginBottom: 0, marginTop: 10 }]} onPress={() => setScreen('PAY_DUE')}>
                   <Text style={[styles.navyBtnTxt, { color: '#fff' }]}>{t.payDueNow}</Text>
                 </TouchableOpacity>
               </View>
             )}
-
-            <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8, color: '#0F172A' }}>{t.cashOut}</Text>
+            <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8 }}>{t.cashOut}</Text>
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
               {['BKASH', 'NAGAD'].map((m) => (
                 <TouchableOpacity key={m} onPress={() => { setWMethod(m); setWNumber(m === 'BKASH' ? (pBkash || pPhone) : (pNagad || pPhone)); }}
                   style={[styles.payPickCard, wMethod === m && { borderColor: m === 'BKASH' ? '#E2136E' : '#F37021', backgroundColor: '#f8fafc' }]}>
-                  <PaymentLogo method={m} size={34} />
-                  <Text style={{ fontWeight: '800', color: '#0F172A' }}>{m}</Text>
+                  <PaymentLogo method={m} size={34} /><Text style={{ fontWeight: '800' }}>{m}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             <TextInput style={styles.input} placeholder="Amount (Min 50 BDT)" keyboardType="numeric" value={wAmount} onChangeText={setWAmount} />
             <TextInput style={styles.input} placeholder={`${wMethod} Number`} keyboardType="phone-pad" value={wNumber} onChangeText={setWNumber} />
-            <TouchableOpacity style={styles.navyBtn} onPress={submitWithdraw} disabled={loading}>
-              <Text style={styles.navyBtnTxt}>Request Withdraw</Text>
-            </TouchableOpacity>
-
-            <Text style={{ fontSize: 16, fontWeight: '800', marginTop: 10, marginBottom: 8 }}>Recent Payouts & Due Settlements</Text>
+            <TouchableOpacity style={styles.navyBtn} onPress={submitWithdraw} disabled={loading}><Text style={styles.navyBtnTxt}>Request Withdraw</Text></TouchableOpacity>
             {duePayments.map((d) => (
-              <View key={`d_${d.id}`} style={styles.docRow}>
-                <PaymentLogo method={d.method} size={32} />
-                <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ fontWeight: '700' }}>Due Paid ({d.trx_id})</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{d.status}</Text></View>
-                <Text style={{ fontWeight: '800', color: '#00D2B8' }}>+{d.amount}৳</Text>
-              </View>
+              <View key={`d_${d.id}`} style={styles.docRow}><PaymentLogo method={d.method} size={32} /><View style={{ flex: 1, marginLeft: 10 }}><Text style={{ fontWeight: '700' }}>Due Paid ({d.trx_id})</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{d.status}</Text></View><Text style={{ fontWeight: '800', color: '#00D2B8' }}>+{d.amount}৳</Text></View>
             ))}
             {withdraws.map((w) => (
-              <View key={`w_${w.id}`} style={styles.docRow}>
-                <PaymentLogo method={w.method} size={32} />
-                <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ fontWeight: '700' }}>{w.account_number}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{w.status}</Text></View>
-                <Text style={{ fontWeight: '800', color: '#059669' }}>{w.amount}৳</Text>
-              </View>
+              <View key={`w_${w.id}`} style={styles.docRow}><PaymentLogo method={w.method} size={32} /><View style={{ flex: 1, marginLeft: 10 }}><Text style={{ fontWeight: '700' }}>{w.account_number}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{w.status}</Text></View><Text style={{ fontWeight: '800', color: '#059669' }}>{w.amount}৳</Text></View>
             ))}
           </ScrollView>
         )}
 
-        {/* ৫. PAY DUE TO ADMIN (bKash Merchant / Nagad Merchant / Bank + QR + Link) */}
         {screen === 'PAY_DUE' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('WALLET')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
             <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 12, marginBottom: 4 }}>Pay Commission Due</Text>
-            <Text style={{ color: '#64748b', marginBottom: 14 }}>Select Merchant / Bank to clear negative wallet balance</Text>
-
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginVertical: 14 }}>
               {['BKASH', 'NAGAD', 'BANK'].map((m) => (
                 <TouchableOpacity key={m} onPress={() => setDueMethod(m)} style={[styles.payPickCard, dueMethod === m && { borderColor: '#00D2B8', backgroundColor: '#f0fdfa' }]}>
-                  <PaymentLogo method={m} size={32} />
-                  <Text style={{ fontWeight: '800', fontSize: 12 }}>{m}</Text>
+                  <PaymentLogo method={m} size={32} /><Text style={{ fontWeight: '800', fontSize: 12 }}>{m}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-
             <View style={styles.merchantBox}>
-              <Text style={{ fontWeight: '800', fontSize: 15, color: '#0F172A' }}>
+              <Text style={{ fontWeight: '800', fontSize: 15 }}>
                 {dueMethod === 'BKASH' ? `bKash Merchant: ${pubSettings.bkash_merchant || '01700000000'}`
                   : dueMethod === 'NAGAD' ? `Nagad Merchant: ${pubSettings.nagad_merchant || '01800000000'}`
-                  : `Bank: ${pubSettings.bank_details || 'Contact Admin'}`}
+                  : `Bank: ${pubSettings.bank_details || ''}`}
               </Text>
               {(dueMethod === 'BKASH' ? pubSettings.bkash_qr_url : pubSettings.nagad_qr_url) ? (
                 <Image source={{ uri: dueMethod === 'BKASH' ? pubSettings.bkash_qr_url : pubSettings.nagad_qr_url }} style={{ width: 180, height: 180, alignSelf: 'center', marginTop: 12, borderRadius: 12 }} />
@@ -367,48 +339,34 @@ export default function DriverMenus({
                 </TouchableOpacity>
               ) : null}
             </View>
-
-            <Text style={styles.lbl}>Amount (BDT)</Text>
-            <TextInput style={styles.input} keyboardType="numeric" value={dueAmount} onChangeText={setDueAmount} />
-            <Text style={styles.lbl}>Transaction ID (TrxID)</Text>
-            <TextInput style={styles.input} placeholder="e.g. 9HG54K21" value={dueTrx} onChangeText={setDueTrx} />
-            <TouchableOpacity style={styles.navyBtn} onPress={submitDuePay} disabled={loading}>
-              <Text style={styles.navyBtnTxt}>Submit Payment Verification</Text>
-            </TouchableOpacity>
+            <Text style={styles.lbl}>Amount</Text><TextInput style={styles.input} keyboardType="numeric" value={dueAmount} onChangeText={setDueAmount} />
+            <Text style={styles.lbl}>TrxID</Text><TextInput style={styles.input} placeholder="9HG54K21" value={dueTrx} onChangeText={setDueTrx} />
+            <TouchableOpacity style={styles.navyBtn} onPress={submitDuePay} disabled={loading}><Text style={styles.navyBtnTxt}>Submit Verification</Text></TouchableOpacity>
           </ScrollView>
         )}
 
-        {/* ৬. 30-DAY DAILY EARNINGS & INDIVIDUAL TRIP DETAILS */}
         {screen === 'EARNINGS_DETAIL' && (
           <View style={{ flex: 1 }}>
             <View style={styles.topNav}>
               <TouchableOpacity onPress={onClose}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
-              <Text style={styles.navTitle}>Earnings & Trip History</Text>
-              <View style={{ width: 24 }} />
+              <Text style={styles.navTitle}>30-Day Earnings & Trips</Text><View style={{ width: 24 }} />
             </View>
             <View style={styles.tabRow}>
-              <TouchableOpacity onPress={() => setEarnSubTab('DAILY')} style={[styles.tabBtn, earnSubTab === 'DAILY' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}>
-                <Text style={{ fontWeight: '800' }}>Last 30 Days ({dailyList.length})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setEarnSubTab('TRIPS')} style={[styles.tabBtn, earnSubTab === 'TRIPS' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}>
-                <Text style={{ fontWeight: '800' }}>All Trips ({tripList.length})</Text>
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setEarnSubTab('DAILY')} style={[styles.tabBtn, earnSubTab === 'DAILY' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}><Text style={{ fontWeight: '800' }}>30-Day Daily ({dailyList.length})</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setEarnSubTab('TRIPS')} style={[styles.tabBtn, earnSubTab === 'TRIPS' && { borderBottomWidth: 3, borderColor: '#00D2B8' }]}><Text style={{ fontWeight: '800' }}>All Trips ({tripList.length})</Text></TouchableOpacity>
             </View>
             <ScrollView style={{ flex: 1, padding: 18 }}>
               {earnSubTab === 'DAILY' ? dailyList.map((d) => (
                 <View key={d.day} style={styles.tripCard}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '800', fontSize: 15, color: '#0F172A' }}>{d.day}</Text>
-                    <Text style={{ fontSize: 12, color: '#64748b' }}>{d.trips} completed trips • Total Fare: ৳{d.total_fare}</Text>
-                  </View>
+                  <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 15 }}>{d.day}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{d.trips} trips • Total ৳{d.total_fare}</Text></View>
                   <Text style={{ fontSize: 18, fontWeight: '900', color: '#059669' }}>+৳{d.total_earning}</Text>
                 </View>
               )) : tripList.map((tr) => (
                 <View key={tr.id} style={styles.tripCard}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '800', fontSize: 14, color: '#0F172A' }}>Trip #{tr.id} • {tr.payment_method}</Text>
-                    <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{tr.pickup_address} → {tr.drop_address}</Text>
-                    <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{tr.actual_distance_km} km • {tr.actual_duration_min} min • Fare ৳{tr.final_fare}</Text>
+                    <Text style={{ fontWeight: '800', fontSize: 14 }}>#{tr.id} [{tr.ride_type || 'RIDE'}] • {tr.payment_method}</Text>
+                    <Text style={{ fontSize: 12, color: '#475569' }}>{tr.pickup_address} → {tr.drop_address}</Text>
+                    <Text style={{ fontSize: 11, color: '#64748b' }}>{tr.actual_distance_km} km • {tr.actual_duration_min} min</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ fontSize: 16, fontWeight: '900', color: '#059669' }}>+৳{tr.driver_earning}</Text>
@@ -416,12 +374,10 @@ export default function DriverMenus({
                   </View>
                 </View>
               ))}
-              {(earnSubTab === 'DAILY' ? dailyList : tripList).length === 0 && <Text style={{ color: '#64748b', textAlign: 'center', marginTop: 20 }}>No completed trips yet.</Text>}
             </ScrollView>
           </View>
         )}
 
-        {/* ৭. PROFILE, MANAGE ACCOUNT, SETTINGS & REFER */}
         {(screen === 'PROFILE' || screen === 'PUBLIC_PROFILE') && (
           <ScrollView style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, justifyContent: 'space-between' }}>
@@ -436,10 +392,6 @@ export default function DriverMenus({
                 <Text style={{ color: '#A3E635', fontSize: 12, fontWeight: '700', marginTop: 6 }}>Tap to change photo</Text>
               </TouchableOpacity>
               <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 6 }}>{user?.name}</Text>
-            </View>
-            <View style={{ padding: 20, flexDirection: 'row', gap: 10 }}>
-              <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800' }}>4.95 ★</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Rating</Text></View>
-              <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800' }}>{txns.length}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Activity</Text></View>
             </View>
           </ScrollView>
         )}
@@ -462,12 +414,8 @@ export default function DriverMenus({
             <Text style={{ fontSize: 26, fontWeight: '800', marginVertical: 14 }}>{t.settings}</Text>
             <Text style={styles.lbl}>{t.language}</Text>
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
-              <TouchableOpacity onPress={() => setLang('en')} style={[styles.chip, lang === 'en' && { backgroundColor: '#0F172A' }]}>
-                <Text style={{ color: lang === 'en' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>English (Default)</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setLang('bn')} style={[styles.chip, lang === 'bn' && { backgroundColor: '#0F172A' }]}>
-                <Text style={{ color: lang === 'bn' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>বাংলা (Bangladesh)</Text>
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setLang('en')} style={[styles.chip, lang === 'en' && { backgroundColor: '#0F172A' }]}><Text style={{ color: lang === 'en' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>English</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setLang('bn')} style={[styles.chip, lang === 'bn' && { backgroundColor: '#0F172A' }]}><Text style={{ color: lang === 'bn' ? '#00D2B8' : '#0F172A', fontWeight: '800' }}>বাংলা</Text></TouchableOpacity>
             </View>
             <TouchableOpacity style={styles.docRow} onPress={() => setNightMode(!nightMode)}>
               <Ionicons name="moon-outline" size={22} color="#0F172A" />
@@ -480,9 +428,7 @@ export default function DriverMenus({
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color="#0F172A" /></TouchableOpacity>
             <Text style={{ fontSize: 26, fontWeight: '800', marginTop: 12 }}>{t.referEarn}</Text>
-            <TouchableOpacity style={[styles.navyBtn, { marginTop: 24 }]} onPress={() => Share.share({ message: `Join Zoddir Driver & earn 500 BDT! Code: ${user?.phone}` })}>
-              <Text style={styles.navyBtnTxt}>Invite Friends</Text>
-            </TouchableOpacity>
+            <TouchableOpacity style={[styles.navyBtn, { marginTop: 24 }]} onPress={() => Share.share({ message: `Join Zoddir Driver & earn 500 BDT! Code: ${user?.phone}` })}><Text style={styles.navyBtnTxt}>Invite Friends</Text></TouchableOpacity>
           </ScrollView>
         )}
       </View>

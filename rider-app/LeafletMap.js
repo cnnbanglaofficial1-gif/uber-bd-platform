@@ -87,7 +87,7 @@ export default function LeafletMap({
           if (data.nearbyDrivers && !data.confirmMode) {
             data.nearbyDrivers.forEach(d => {
               const el = document.createElement('div'); el.className = 'car-pin';
-              el.innerText = d.vehicle_type === 'BIKE' ? '🏍️' : d.vehicle_type === 'CNG' ? '🛺' : '🚘';
+              el.innerText = d.vehicle_type === 'BIKE' ? '🏍️' : d.vehicle_type === 'CNG' ? '🛺' : d.vehicle_type === 'XL' ? '🚐' : '🚘';
               nearbyMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([d.lng, d.lat]).addTo(map));
             });
           }
