@@ -6,12 +6,13 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
-import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { AudioModule, RecordingPresets, createAudioPlayer, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import DriverMap from './DriverMap';
 import DriverMenus from './DriverMenus';
+import SupportAndSafetyModal from './SupportAndSafetyModal';
 import ZoddirLogo from './ZoddirLogo';
 import { PaymentLogo } from './BrandIcons';
 import { STRINGS } from './i18n';
@@ -30,10 +31,10 @@ const COUNTRIES = [
   { name: 'United States', code: '+1', flag: '🇺🇸' }
 ];
 
-// Uber-এর মতো ৩-নোট প্রফেশনাল চিম রিংটোন WAV জেনারেটর (ইন্টারনেট বা MP3 ফাইল ছাড়াই বাজবে)
-function buildUberChimeWav() {
+// হাই-ভলিউম প্রফেশনাল Uber চিম রিংটোন WAV জেনারেটর
+function buildLoudUberChimeWav() {
   const sr = 16000;
-  const totalSamples = Math.floor(sr * 1.35);
+  const totalSamples = Math.floor(sr * 1.0);
   const buffer = new ArrayBuffer(44 + totalSamples * 2);
   const view = new DataView(buffer);
   const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
@@ -45,22 +46,30 @@ function buildUberChimeWav() {
   for (let i = 0; i < totalSamples; i++) {
     const t = i / sr;
     let sample = 0;
-    if (t < 0.22) {
-      const env = Math.exp(-t * 10);
-      sample = (Math.sin(2 * Math.PI * 880 * t) + 0.35 * Math.sin(2 * Math.PI * 1760 * t)) * env;
-    } else if (t >= 0.22 && t < 0.44) {
-      const lt = t - 0.22;
-      const env = Math.exp(-lt * 10);
-      sample = (Math.sin(2 * Math.PI * 1108.73 * lt) + 0.35 * Math.sin(2 * Math.PI * 2217.46 * lt)) * env;
-    } else if (t >= 0.44 && t < 1.0) {
-      const lt = t - 0.44;
-      const env = Math.exp(-lt * 5.5);
-      sample = (Math.sin(2 * Math.PI * 1318.51 * lt) + 0.35 * Math.sin(2 * Math.PI * 2637.02 * lt)) * env;
+    if (t < 0.18) {
+      const env = Math.exp(-t * 7);
+      sample = (Math.sin(2 * Math.PI * 880 * t) + 0.5 * Math.sin(2 * Math.PI * 1760 * t)) * env;
+    } else if (t >= 0.18 && t < 0.36) {
+      const lt = t - 0.18;
+      const env = Math.exp(-lt * 7);
+      sample = (Math.sin(2 * Math.PI * 1108.73 * lt) + 0.5 * Math.sin(2 * Math.PI * 2217.46 * lt)) * env;
+    } else if (t >= 0.36 && t < 0.85) {
+      const lt = t - 0.36;
+      const env = Math.exp(-lt * 3.8);
+      sample = (Math.sin(2 * Math.PI * 1318.51 * lt) + 0.5 * Math.sin(2 * Math.PI * 2637.02 * lt)) * env;
     }
-    const clamped = Math.max(-1, Math.min(1, sample * 0.55));
+    const clamped = Math.max(-1, Math.min(1, sample * 0.98));
     view.setInt16(44 + i * 2, clamped * 32767, true);
   }
   return new Uint8Array(buffer);
+}
+
+function getServiceLabel(vType) {
+  if (vType === 'PREMIUM') return 'Zoddir Premium';
+  if (vType === 'XL') return 'Zoddir XL';
+  if (vType === 'CAR') return 'Zoddir Go';
+  if (vType === 'CNG') return 'Zoddir CNG';
+  return 'Zoddir Moto';
 }
 
 try {
@@ -99,6 +108,7 @@ function OnlineScanner({ title, sub }) {
 export default function App() {
   const [lang, setLang] = useState('en');
   const t = STRINGS[lang];
+  const bn = lang === 'bn';
 
   const [user, setUser] = useState(null);
   const [token, setToken] = useState('');
@@ -111,6 +121,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [regVehicle, setRegVehicle] = useState('BIKE');
   const [regPlate, setRegPlate] = useState('');
+  const [regReferral, setRegReferral] = useState('');
   const [multiVehicles, setMultiVehicles] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -122,7 +133,14 @@ export default function App() {
 
   const [tab, setTab] = useState('HOME');
   const [menuScreen, setMenuScreen] = useState(null);
+  const [ssModal, setSsModal] = useState(null);
   const [nightMode, setNightMode] = useState(false);
+
+  // Safety Hub Trip Audio Recording
+  const [recordOnTrip, setRecordOnTrip] = useState(false);
+  const [isTripRecording, setIsTripRecording] = useState(false);
+  const [savedTripAudioUri, setSavedTripAudioUri] = useState(null);
+  const tripRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const [isOnline, setIsOnline] = useState(false);
   const [driverLoc, setDriverLoc] = useState({ lat: 23.8103, lng: 90.4125, accuracy: 10 });
@@ -135,6 +153,9 @@ export default function App() {
   const [routeCoords, setRouteCoords] = useState([]);
   const [tripSec, setTripSec] = useState(0);
   const [tripReceipt, setTripReceipt] = useState(null);
+
+  const [surgeZones, setSurgeZones] = useState([]);
+  const [peakHour, setPeakHour] = useState(null);
 
   const [pinModal, setPinModal] = useState(false);
   const [riderPinInput, setRiderPinInput] = useState('');
@@ -153,6 +174,7 @@ export default function App() {
   const startRingtone = () => {
     try {
       if (ringPlayerRef.current) {
+        ringPlayerRef.current.volume = 1.0;
         ringPlayerRef.current.loop = true;
         ringPlayerRef.current.seekTo(0);
         ringPlayerRef.current.play();
@@ -173,10 +195,11 @@ export default function App() {
     (async () => {
       try {
         await setAudioModeAsync({ playsInSilentMode: true });
-        const file = new File(Paths.cache, 'zoddir_ring.wav');
+        const file = new File(Paths.cache, 'zoddir_loud_ring.wav');
         file.create({ overwrite: true });
-        file.write(buildUberChimeWav());
+        file.write(buildLoudUberChimeWav());
         const p = createAudioPlayer({ uri: file.uri });
+        p.volume = 1.0;
         p.loop = true;
         ringPlayerRef.current = p;
       } catch {}
@@ -194,23 +217,38 @@ export default function App() {
     return () => { sub.remove(); stopRingtone(); };
   }, []);
 
-  // ১০ সেকেন্ড অফার টাইমার + Uber চিম রিংটোন লুপ!
+  // ট্রিপ শুরু হলে অটো অডিও রেকর্ডিং
   useEffect(() => {
-    if (!currentOffer) {
-      stopRingtone();
-      setOfferSec(10);
-      return;
-    }
+    const syncTripAudio = async () => {
+      if (recordOnTrip && activeRide?.status === 'STARTED' && !isTripRecording) {
+        try {
+          const p = await AudioModule.requestRecordingPermissionsAsync();
+          if (p.granted) {
+            await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+            await tripRecorder.prepareToRecordAsync();
+            tripRecorder.record();
+            setIsTripRecording(true);
+          }
+        } catch {}
+      } else if (isTripRecording && activeRide?.status !== 'STARTED') {
+        try {
+          await tripRecorder.stop();
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+          if (tripRecorder.uri) setSavedTripAudioUri(tripRecorder.uri);
+        } catch {}
+        setIsTripRecording(false);
+      }
+    };
+    syncTripAudio();
+  }, [activeRide?.status, recordOnTrip]);
+
+  useEffect(() => {
+    if (!currentOffer) { stopRingtone(); setOfferSec(10); return; }
     setOfferSec(10);
     startRingtone();
     const iv = setInterval(() => {
       setOfferSec((prev) => {
-        if (prev <= 1) {
-          clearInterval(iv);
-          stopRingtone();
-          declineRide(currentOffer.id);
-          return 0;
-        }
+        if (prev <= 1) { clearInterval(iv); stopRingtone(); declineRide(currentOffer.id); return 0; }
         return prev - 1;
       });
     }, 1000);
@@ -233,13 +271,20 @@ export default function App() {
       .catch(() => setRouteCoords([[from.lat, from.lng], [to.lat, to.lng]]));
   }, [activeRide?.id, activeRide?.status]);
 
+  const loadSurge = () => {
+    axios.get(`${API}/api/surge/active`).then((r) => {
+      setSurgeZones(r.data.zones || []);
+      setPeakHour(r.data.peak_hour || null);
+    }).catch(() => {});
+  };
+
   const triggerRidePopup = async (ride) => {
     if (notifiedIds.current.has(ride.id)) return;
     notifiedIds.current.add(ride.id);
-    Vibration.vibrate([0, 400, 200, 400]);
+    Vibration.vibrate([0, 500, 200, 500]);
     try {
       await Notifications.scheduleNotificationAsync({
-        content: { title: `New ${ride.ride_type || 'RIDE'} (${ride.vehicle_type}) • BDT ${ride.estimated_fare}`, body: `${ride.pickup_address} -> ${ride.drop_address}`, sound: 'default', priority: Notifications.AndroidNotificationPriority.MAX },
+        content: { title: `New ${getServiceLabel(ride.vehicle_type)} • BDT ${ride.estimated_fare}`, body: `${ride.pickup_address} -> ${ride.drop_address}`, sound: 'default', priority: Notifications.AndroidNotificationPriority.MAX },
         trigger: null
       });
     } catch {}
@@ -277,13 +322,10 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !token) return;
-    loadWallet(); loadQuests();
+    loadWallet(); loadQuests(); loadSurge();
     const socket = io(API, { transports: ['websocket'] });
     socket.on('connect', () => socket.emit('join_room', { role: 'DRIVER', userId: user.id }));
-    socket.on('new_ride_request', (ride) => {
-      setAvailableRides((prev) => [ride, ...prev.filter((r) => r.id !== ride.id)]);
-      triggerRidePopup(ride);
-    });
+    socket.on('new_ride_request', (ride) => { setAvailableRides((prev) => [ride, ...prev.filter((r) => r.id !== ride.id)]); triggerRidePopup(ride); });
     socket.on('ride_cancelled', () => { stopRingtone(); setActiveRide(null); setPinModal(false); Alert.alert('Cancelled', 'Rider cancelled the trip'); });
 
     const updateGpsNow = async () => {
@@ -294,12 +336,13 @@ export default function App() {
           const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude, accuracy: loc.coords.accuracy || 10 };
           driverLocRef.current = coords;
           setDriverLoc(coords);
-          if (isOnline) {
+          if (isOnline || activeRide) {
             socket.emit('driver_location_update', {
               driverId: user.id, vehicleType: user.driverProfile?.vehicle_type || 'BIKE',
               lat: coords.lat, lng: coords.lng, accuracy: coords.accuracy,
-              activeRideId: activeRide?.status === 'STARTED' ? activeRide.id : null,
-              riderId: activeRide?.rider_id || null
+              activeRideId: activeRide?.id || null,
+              riderId: activeRide?.rider_id || null,
+              isStarted: activeRide?.status === 'STARTED'
             });
           }
         }
@@ -307,6 +350,7 @@ export default function App() {
     };
     updateGpsNow();
     const gpsTimer = setInterval(updateGpsNow, 4000);
+    const surgeTimer = setInterval(loadSurge, 15000);
 
     const pollTimer = setInterval(async () => {
       try {
@@ -326,7 +370,7 @@ export default function App() {
       } catch {}
     }, 4000);
 
-    return () => { socket.disconnect(); clearInterval(gpsTimer); clearInterval(pollTimer); };
+    return () => { socket.disconnect(); clearInterval(gpsTimer); clearInterval(pollTimer); clearInterval(surgeTimer); };
   }, [user, token, isOnline, activeRide]);
 
   const handleAuth = async (chosenVehicle = null) => {
@@ -336,7 +380,7 @@ export default function App() {
       const ep = isRegister ? '/api/auth/register' : '/api/auth/login';
       const formattedPhone = phone.startsWith('+') ? phone : `${country.code}${phone.replace(/^0+/, '')}`;
       const payload = isRegister
-        ? { name: name || 'Driver', email, phone: formattedPhone, password, role: 'DRIVER', vehicle_type: regVehicle, plate_number: regPlate }
+        ? { name: name || 'Driver', email, phone: formattedPhone, password, role: 'DRIVER', vehicle_type: regVehicle, plate_number: regPlate, referral_phone: regReferral }
         : { phone, dial_code: country.code, password, role: 'DRIVER', vehicle_type: chosenVehicle || undefined };
       const res = await axios.post(`${API}${ep}`, payload);
       if (res.data.choose_vehicle) { setMultiVehicles(res.data.vehicles); setLoading(false); return; }
@@ -348,12 +392,12 @@ export default function App() {
   };
 
   const sendForgotCode = async () => {
-    if (!fEmail) return Alert.alert('Required', 'Enter your email address');
+    if (!fEmail) return Alert.alert('Required', 'Enter email');
     setLoading(true);
     try {
       const res = await axios.post(`${API}/api/auth/forgot-password`, { email: fEmail, role: 'DRIVER' });
       setFSent(true);
-      if (res.data.test_code) Alert.alert('Verification Code (Test)', `Your 6-digit code is: ${res.data.test_code}`);
+      if (res.data.test_code) Alert.alert('Code (Test)', `Code: ${res.data.test_code}`);
       else Alert.alert('Sent', res.data.message);
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
@@ -364,7 +408,7 @@ export default function App() {
     setLoading(true);
     try {
       await axios.post(`${API}/api/auth/reset-password`, { email: fEmail, role: 'DRIVER', code: fCode, new_password: fNewPass });
-      Alert.alert('Success', 'Password reset successful!');
+      Alert.alert('Success', 'Password changed!');
       setForgotOpen(false); setFSent(false); setFCode(''); setFNewPass('');
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Invalid code'); }
     setLoading(false);
@@ -384,7 +428,7 @@ export default function App() {
     try {
       const res = await axios.post(`${API}/api/rides/${id}/accept`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setActiveRide(res.data.ride); setAvailableRides([]);
-    } catch (err) { Alert.alert('Unavailable', err.response?.data?.error || 'Ride already taken'); }
+    } catch (err) { Alert.alert('Unavailable', err.response?.data?.error || 'Ride taken'); }
     setLoading(false);
   };
 
@@ -411,8 +455,7 @@ export default function App() {
     try {
       const res = await axios.post(`${API}/api/rides/${activeRide.id}/complete`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setTripReceipt({ ...res.data.ride, new_balance: res.data.wallet_balance });
-      setActiveRide(null);
-      loadWallet(); loadQuests();
+      setActiveRide(null); loadWallet(); loadQuests();
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
   };
@@ -429,7 +472,7 @@ export default function App() {
           {isRegister && (
             <>
               <TextInput style={styles.input} placeholder={t.fullName} value={name} onChangeText={setName} />
-              <TextInput style={styles.input} placeholder={t.emailPh} keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+              <TextInput style={styles.input} placeholder={bn ? 'ইমেইল ঠিকানা' : 'Email Address'} keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>{t.selectVehType}</Text>
               <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
                 {['BIKE', 'CNG', 'CAR', 'XL'].map((v) => (
@@ -439,6 +482,7 @@ export default function App() {
                 ))}
               </View>
               <TextInput style={styles.input} placeholder={t.platePh} value={regPlate} onChangeText={setRegPlate} />
+              <TextInput style={styles.input} placeholder={bn ? 'রেফারেল ড্রাইভারের ফোন নম্বর (ঐচ্ছিক)' : 'Referral Driver Phone (Optional)'} keyboardType="phone-pad" value={regReferral} onChangeText={setRegReferral} />
             </>
           )}
           <View style={styles.phoneRow}>
@@ -496,7 +540,7 @@ export default function App() {
           <View style={styles.modalBg}>
             <View style={styles.receiptCard}>
               <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 10 }}>{t.resetTitle}</Text>
-              <TextInput style={styles.input} placeholder={t.emailPh} keyboardType="email-address" autoCapitalize="none" value={fEmail} onChangeText={setFEmail} />
+              <TextInput style={styles.input} placeholder={bn ? 'ইমেইল ঠিকানা' : 'Email Address'} keyboardType="email-address" autoCapitalize="none" value={fEmail} onChangeText={setFEmail} />
               {!fSent ? (
                 <TouchableOpacity style={styles.navyBtn} onPress={sendForgotCode} disabled={loading}><Text style={styles.navyBtnTxt}>{t.sendCode}</Text></TouchableOpacity>
               ) : (
@@ -539,10 +583,7 @@ export default function App() {
                     <View><Text style={{ fontWeight: '800', fontSize: 16 }}>{t.reqAction}</Text><Text style={{ fontSize: 12, color: '#dc2626' }}>{t.resolveFirst}</Text></View>
                   </View>
                   <TouchableOpacity style={styles.actionRow} onPress={() => setMenuScreen('DOCUMENTS')}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontWeight: '700', fontSize: 15 }}>{dp.verification_status === 'REJECTED' ? `${t.docsRejected}: ${dp.rejection_reason || ''}` : t.docsPending}</Text>
-                      <Text style={{ fontSize: 12, color: '#64748b' }}>{t.uploadDocsHint}</Text>
-                    </View>
+                    <View style={{ flex: 1 }}><Text style={{ fontWeight: '700', fontSize: 15 }}>{dp.verification_status === 'REJECTED' ? `${t.docsRejected}: ${dp.rejection_reason || ''}` : t.docsPending}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{t.uploadDocsHint}</Text></View>
                     <Ionicons name="chevron-forward" size={20} color="#0F172A" />
                   </TouchableOpacity>
                 </View>
@@ -556,7 +597,8 @@ export default function App() {
                 driverLoc={driverLoc}
                 pickup={activeRide ? { lat: activeRide.pickup_lat, lng: activeRide.pickup_lng } : null}
                 drop={activeRide ? { lat: activeRide.drop_lat, lng: activeRide.drop_lng } : null}
-                routeCoords={routeCoords} isOnline={isOnline} recenterCount={recenterCount} dark={nightMode}
+                routeCoords={routeCoords} surgeZones={surgeZones} isOnline={isOnline} recenterCount={recenterCount} dark={nightMode}
+                onSurgeTap={(z) => Alert.alert(`⚡ ${z.name} Surge`, `0 - ${z.radius_1_km} km: ${z.mult_1}x\n${z.radius_1_km} - ${z.radius_2_km} km: ${z.mult_2}x\nActive Time: ${z.start_time} - ${z.end_time}`)}
               />
 
               <View style={[styles.mapFloating, { top: TOP_PAD }]}>
@@ -567,8 +609,22 @@ export default function App() {
                   <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 15 }}>৳ {wallet.total_earned}</Text>
                   {Number(wallet.balance) < 0 && <View style={styles.dueDot} />}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.roundIcon} onPress={() => setRecenterCount((c) => c + 1)}><Ionicons name="locate" size={22} color="#0F172A" /></TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity style={[styles.roundIcon, { backgroundColor: '#0F172A' }]} onPress={() => setSsModal('SAFETY')}>
+                    <Ionicons name="shield-checkmark" size={20} color={isTripRecording ? '#fb7185' : '#00D2B8'} />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.roundIcon} onPress={() => setRecenterCount((c) => c + 1)}>
+                    <Ionicons name="locate" size={22} color="#0F172A" />
+                  </TouchableOpacity>
+                </View>
               </View>
+
+              {/* Peak Hour Boost Banner (No map cloud) */}
+              {peakHour && !activeRide && (
+                <View style={[styles.peakFloating, { top: TOP_PAD + 52 }]}>
+                  <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 12 }}>🔥 Peak Hour Active: {peakHour.multiplier}x Fare ({peakHour.start}-{peakHour.end})</Text>
+                </View>
+              )}
 
               <View style={[styles.homeSheet, { backgroundColor: themeBg }]}>
                 {activeRide ? (
@@ -580,16 +636,18 @@ export default function App() {
                       })}
                     </View>
                     {activeRide.status === 'STARTED' && (
-                      <View style={styles.liveTimerBar}><Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 13 }}>Live GPS Active ({activeRide.ride_type || 'RIDE'})</Text><Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 16 }}>{timerTxt}</Text></View>
+                      <View style={styles.liveTimerBar}>
+                        <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 12 }}>{isTripRecording ? '🔴 REC • ' : ''}{getServiceLabel(activeRide.vehicle_type)}</Text>
+                        <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 16 }}>{timerTxt}</Text>
+                      </View>
                     )}
                     <View style={styles.riderStrip}>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontWeight: '800', fontSize: 16, color: '#0F172A' }}>{activeRide.rider_name || 'Rider'} [{activeRide.ride_type || 'RIDE'}]</Text>
+                        <Text style={{ fontWeight: '800', fontSize: 16, color: '#0F172A' }}>{activeRide.rider_name || 'Rider'} • {getServiceLabel(activeRide.vehicle_type)}</Text>
                         <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{activeRide.pickup_address} → {activeRide.drop_address}</Text>
+                        {activeRide.surge_multiplier > 1 && <Text style={{ fontSize: 11, color: '#ea580c', fontWeight: '800' }}>⚡ Surge {activeRide.surge_multiplier}x Applied</Text>}
                         {activeRide.ride_type === 'PARCEL' && activeRide.meta_json?.recipient_name && (
-                          <Text style={{ fontSize: 11, color: '#0F172A', fontWeight: '700', marginTop: 2 }}>
-                            Parcel To: {activeRide.meta_json.recipient_name} ({activeRide.meta_json.recipient_phone}) {activeRide.meta_json.pin_code ? `• PIN: ${activeRide.meta_json.pin_code}` : ''}
-                          </Text>
+                          <Text style={{ fontSize: 11, color: '#0F172A', fontWeight: '700', marginTop: 2 }}>Parcel To: {activeRide.meta_json.recipient_name} ({activeRide.meta_json.recipient_phone})</Text>
                         )}
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
                           <PaymentLogo method={activeRide.payment_method} size={22} />
@@ -625,7 +683,7 @@ export default function App() {
                 ) : (
                   <View style={{ gap: 10 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={styles.tealDot} /><Text style={{ fontWeight: '800', fontSize: 14, color: '#059669' }}>Online ({dp.vehicle_type}{dp.allow_premium ? ' + Premium' : ''})</Text></View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={styles.tealDot} /><Text style={{ fontWeight: '800', fontSize: 13, color: '#059669' }}>Online ({dp.allow_go ? 'Go ' : ''}{dp.allow_premium ? '• Premium ' : ''}{dp.allow_xl ? '• XL' : dp.vehicle_type})</Text></View>
                       <TouchableOpacity style={styles.offlineBtn} onPress={() => toggleOnline(false)}><Text style={{ color: '#e11d48', fontWeight: '800', fontSize: 12 }}>{t.goOffline}</Text></TouchableOpacity>
                     </View>
                     {!currentOffer ? (
@@ -633,23 +691,22 @@ export default function App() {
                     ) : (
                       <View style={styles.offerCard}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <View style={styles.farePill}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 18 }}>৳ {currentOffer.estimated_fare}</Text></View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <View style={styles.farePill}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 18 }}>৳ {currentOffer.estimated_fare}</Text></View>
+                            <View style={styles.classPill}><Text style={{ color: '#fff', fontWeight: '900', fontSize: 11 }}>{getServiceLabel(currentOffer.vehicle_type)}</Text></View>
+                            {currentOffer.surge_multiplier > 1 && <View style={styles.surgeSmall}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 11 }}>⚡ {currentOffer.surge_multiplier}x</Text></View>}
+                          </View>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <PaymentLogo method={currentOffer.payment_method} size={24} />
                             <View style={styles.timerBadge}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 13 }}>{offerSec}s</Text></View>
                           </View>
                         </View>
                         <View style={styles.countTrack}><View style={[styles.countFill, { width: `${offerSec * 10}%` }]} /></View>
-                        <Text style={{ color: '#00D2B8', fontSize: 11, fontWeight: '800', marginTop: 6 }}>[{currentOffer.ride_type || 'RIDE'} • {currentOffer.vehicle_type}]</Text>
-                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 2 }}>From: {currentOffer.pickup_address}</Text>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 8 }}>From: {currentOffer.pickup_address}</Text>
                         <Text style={{ color: '#cbd5e1', fontSize: 13, marginTop: 2, marginBottom: 12 }}>To: {currentOffer.drop_address}</Text>
                         <View style={{ flexDirection: 'row', gap: 10 }}>
-                          <TouchableOpacity style={styles.skipBtn} onPress={() => declineRide(currentOffer.id)}>
-                            <Text style={{ color: '#f8fafc', fontWeight: '800', fontSize: 14 }}>{t.decline}</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.acceptBtn} onPress={() => acceptRide(currentOffer.id)}>
-                            <Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 15 }}>{t.acceptRide} ({offerSec}s)</Text>
-                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.skipBtn} onPress={() => declineRide(currentOffer.id)}><Text style={{ color: '#f8fafc', fontWeight: '800', fontSize: 14 }}>{t.decline}</Text></TouchableOpacity>
+                          <TouchableOpacity style={styles.acceptBtn} onPress={() => acceptRide(currentOffer.id)}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 15 }}>{t.acceptRide} ({offerSec}s)</Text></TouchableOpacity>
                         </View>
                       </View>
                     )}
@@ -697,6 +754,10 @@ export default function App() {
       {tab === 'INBOX' && (
         <ScrollView style={{ flex: 1, padding: 18, paddingTop: TOP_PAD }}>
           <Text style={[styles.h1, { color: themeTxt }]}>{t.inbox}</Text>
+          <TouchableOpacity style={styles.inboxRow} onPress={() => setSsModal('SUPPORT')}>
+            <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 15, color: '#00D2B8' }}>💬 Contact Zoddir Support</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Chat, send voice or files to Admin</Text></View>
+            <Ionicons name="chevron-forward" size={20} color="#00D2B8" />
+          </TouchableOpacity>
           <TouchableOpacity style={styles.inboxRow} onPress={() => setMenuScreen('DOCUMENTS')}>
             <View style={{ flex: 1 }}><Text style={{ fontWeight: '700', fontSize: 15 }}>{isVerified ? 'Account Verified' : t.docsPending}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{isVerified ? 'Ready for Zoddir rides' : t.uploadDocsHint}</Text></View>
             <Ionicons name={isVerified ? 'checkmark-circle' : 'alert-circle'} size={22} color={isVerified ? '#00D2B8' : '#f59e0b'} />
@@ -711,16 +772,17 @@ export default function App() {
         <ScrollView style={{ flex: 1, padding: 20, paddingTop: TOP_PAD }}>
           <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 24 }} onPress={() => setMenuScreen('PROFILE')}>
             {user.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: 62, height: 62, borderRadius: 31, borderWidth: 2, borderColor: '#00D2B8' }} /> : <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }}><Ionicons name="person" size={28} color="#00D2B8" /></View>}
-            <View><Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{user.name}</Text><Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>{dp.vehicle_type} • Profile →</Text></View>
+            <View><Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{user.name}</Text><Text style={{ fontSize: 12, color: '#00D2B8', fontWeight: '800' }}>{dp.vehicle_type} • ★ {dp.rating || '5.00'}</Text></View>
           </TouchableOpacity>
           {[
             { lbl: t.referEarn, fn: () => setMenuScreen('REFER') },
-            { lbl: t.opportunities, fn: () => setTab('EXPLORE') },
+            { lbl: 'Safety Hub (999 & Audio)', fn: () => setSsModal('SAFETY') },
+            { lbl: 'Contact Support', fn: () => setSsModal('SUPPORT') },
             { lbl: 'Wallet & Payouts', fn: () => setMenuScreen('WALLET') },
             { lbl: t.account, fn: () => setMenuScreen('ACCOUNT') },
             { lbl: t.settings, fn: () => setMenuScreen('SETTINGS') }
           ].map((m) => (
-            <TouchableOpacity key={m.lbl} style={{ paddingVertical: 15 }} onPress={m.fn}><Text style={{ fontSize: 22, fontWeight: '800', color: themeTxt }}>{m.lbl}</Text></TouchableOpacity>
+            <TouchableOpacity key={m.lbl} style={{ paddingVertical: 14 }} onPress={m.fn}><Text style={{ fontSize: 20, fontWeight: '800', color: themeTxt }}>{m.lbl}</Text></TouchableOpacity>
           ))}
         </ScrollView>
       )}
@@ -781,6 +843,13 @@ export default function App() {
         onLogout={() => { stopRingtone(); setUser(null); setToken(''); }}
         wallet={wallet} txns={txns} withdraws={withdraws} duePayments={duePayments} onReloadWallet={loadWallet}
         lang={lang} setLang={setLang} nightMode={nightMode} setNightMode={setNightMode}
+        recordOnTrip={recordOnTrip} setRecordOnTrip={setRecordOnTrip}
+        onOpenSafety={() => setSsModal('SAFETY')} onOpenSupport={() => setSsModal('SUPPORT')}
+      />
+      <SupportAndSafetyModal
+        visible={!!ssModal} mode={ssModal} onClose={() => setSsModal(null)}
+        token={token} API={API} lang={lang}
+        recordOnTrip={recordOnTrip} setRecordOnTrip={setRecordOnTrip} savedTripAudioUri={savedTripAudioUri}
       />
     </View>
   );
@@ -802,6 +871,7 @@ const styles = StyleSheet.create({
   mapFloating: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
   earnBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#0F172A', paddingHorizontal: 18, paddingVertical: 8, borderRadius: 22, borderWidth: 1.5, borderColor: '#00D2B8', elevation: 6 },
   dueDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fb7185' },
+  peakFloating: { position: 'absolute', alignSelf: 'center', backgroundColor: '#A3E635', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, elevation: 6, zIndex: 10 },
   homeSheet: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 18, borderTopLeftRadius: 26, borderTopRightRadius: 26, elevation: 20 },
   tealGoBtn: { flexDirection: 'row', gap: 8, backgroundColor: '#00D2B8', paddingVertical: 15, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
   offlineBtn: { backgroundColor: '#ffe4e6', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
@@ -812,6 +882,8 @@ const styles = StyleSheet.create({
   sweepBar: { width: 110, height: 4, backgroundColor: '#00D2B8', borderRadius: 4 },
   offerCard: { backgroundColor: '#0F172A', padding: 16, borderRadius: 18, borderWidth: 2, borderColor: '#00D2B8', marginBottom: 8 },
   farePill: { backgroundColor: '#A3E635', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 10 },
+  classPill: { backgroundColor: '#2563eb', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  surgeSmall: { backgroundColor: '#fb923c', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   timerBadge: { backgroundColor: '#00D2B8', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   countTrack: { height: 4, backgroundColor: '#1e293b', borderRadius: 4, overflow: 'hidden' },
   countFill: { height: 4, backgroundColor: '#A3E635' },

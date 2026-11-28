@@ -5,11 +5,13 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import LeafletMap from './LeafletMap';
 import AccountModal from './AccountModal';
 import ServicesModal from './ServicesModal';
+import SupportAndSafetyModal from './SupportAndSafetyModal';
 import ZoddirLogo from './ZoddirLogo';
 import { PaymentLogo } from './BrandIcons';
 import { STRINGS } from './i18n';
@@ -44,6 +46,7 @@ function ProgressBar() {
 export default function App() {
   const [lang, setLang] = useState('en');
   const t = STRINGS[lang];
+  const bn = lang === 'bn';
 
   const [user, setUser] = useState(null);
   const [token, setToken] = useState('');
@@ -56,7 +59,6 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Forgot Password
   const [forgotOpen, setForgotOpen] = useState(false);
   const [fEmail, setFEmail] = useState('');
   const [fCode, setFCode] = useState('');
@@ -96,10 +98,47 @@ export default function App() {
   const [driverLoc, setDriverLoc] = useState(null);
   const [history, setHistory] = useState([]);
 
+  // 5-Star Review States
+  const [revRating, setRevRating] = useState(0);
+  const [revTags, setRevTags] = useState([]);
+  const [revComment, setRevComment] = useState('');
+
+  // Safety Hub & Trip Recording
+  const [ssModal, setSsModal] = useState(null); // 'SAFETY' | 'SUPPORT'
+  const [recordOnTrip, setRecordOnTrip] = useState(false);
+  const [isTripRecording, setIsTripRecording] = useState(false);
+  const [savedTripAudioUri, setSavedTripAudioUri] = useState(null);
+  const tripRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
   const [modalMode, setModalMode] = useState(null);
   const [serviceModal, setServiceModal] = useState(null);
   const [cancelStep, setCancelStep] = useState(0);
   const searchTimer = useRef(null);
+
+  // ট্রিপ শুরু হলে অটো অডিও রেকর্ডিং
+  useEffect(() => {
+    const startTripRec = async () => {
+      if (recordOnTrip && activeRide?.status === 'STARTED' && !isTripRecording) {
+        try {
+          const p = await AudioModule.requestRecordingPermissionsAsync();
+          if (p.granted) {
+            await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+            await tripRecorder.prepareToRecordAsync();
+            tripRecorder.record();
+            setIsTripRecording(true);
+          }
+        } catch {}
+      } else if (isTripRecording && activeRide?.status !== 'STARTED') {
+        try {
+          await tripRecorder.stop();
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+          if (tripRecorder.uri) setSavedTripAudioUri(tripRecorder.uri);
+        } catch {}
+        setIsTripRecording(false);
+      }
+    };
+    startTripRec();
+  }, [activeRide?.status, recordOnTrip]);
 
   const loadSettings = () => {
     axios.get(`${API}/api/settings/public`).then((r) => {
@@ -107,9 +146,7 @@ export default function App() {
       setPubSettings(s);
       if ((paymentMethod === 'BKASH' && s.enable_bkash === 'false') ||
           (paymentMethod === 'NAGAD' && s.enable_nagad === 'false') ||
-          (paymentMethod === 'CARD' && s.enable_card === 'false')) {
-        setPaymentMethod('CASH');
-      }
+          (paymentMethod === 'CARD' && s.enable_card === 'false')) setPaymentMethod('CASH');
     }).catch(() => {});
   };
 
@@ -175,7 +212,10 @@ export default function App() {
     socket.on('connect', () => socket.emit('join_room', { role: 'RIDER', userId: user.id }));
     socket.on('ride_accepted', (r) => { setActiveRide(r); setStage('ACTIVE'); });
     socket.on('ride_started', (r) => { setActiveRide(r); setStage('ACTIVE'); });
-    socket.on('ride_completed', (r) => { setActiveRide(null); setCompletedReceipt(r); setStage('MAIN'); loadHistory(); });
+    socket.on('ride_completed', (r) => {
+      setActiveRide(null); setRevRating(0); setRevTags([]); setRevComment('');
+      setCompletedReceipt(r); setStage('MAIN'); loadHistory();
+    });
     socket.on('ride_cancelled', () => resetToHome());
     socket.on('driver_live_location', (loc) => setDriverLoc(loc));
 
@@ -214,35 +254,33 @@ export default function App() {
   };
 
   const sendForgotCode = async () => {
-    if (!fEmail) return Alert.alert('Required', 'Enter your email address');
+    if (!fEmail) return Alert.alert('Required', 'Enter email');
     setLoading(true);
     try {
       const res = await axios.post(`${API}/api/auth/forgot-password`, { email: fEmail, role: 'RIDER' });
       setFSent(true);
-      if (res.data.test_code) Alert.alert('Verification Code (Test)', `Your 6-digit code is: ${res.data.test_code}`);
+      if (res.data.test_code) Alert.alert('Code (Test)', `Code: ${res.data.test_code}`);
       else Alert.alert('Sent', res.data.message);
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     setLoading(false);
   };
 
   const submitResetPassword = async () => {
-    if (!fCode || !fNewPass) return Alert.alert('Required', 'Enter 6-digit code & new password');
+    if (!fCode || !fNewPass) return Alert.alert('Required', 'Enter code & new password');
     setLoading(true);
     try {
       await axios.post(`${API}/api/auth/reset-password`, { email: fEmail, role: 'RIDER', code: fCode, new_password: fNewPass });
-      Alert.alert('Success', 'Password changed! You can now sign in.');
+      Alert.alert('Success', 'Password changed!');
       setForgotOpen(false); setFSent(false); setFCode(''); setFNewPass('');
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Invalid code'); }
     setLoading(false);
   };
 
-  // Debounced reliable backend place search (Sylhet, Uttara, Kushtia, etc.)
   const searchPlace = (text, field) => {
     setActiveField(field);
     if (field === 'PICKUP') setPickupQuery(text); else setDropQuery(text);
     if (searchTimer.current) clearTimeout(searchTimer.current);
     if (text.trim().length < 2) { setSearchResults([]); setSearchingPlaces(false); return; }
-
     setSearchingPlaces(true);
     searchTimer.current = setTimeout(async () => {
       try {
@@ -262,7 +300,7 @@ export default function App() {
         promo_code: promoCode, ride_type: rType, rental_hours: hrs
       });
       setRouteCoords(res.data.route_coords);
-      setTripMeta({ km: res.data.distance_km, min: res.data.duration_min, promoValid: res.data.promo_valid });
+      setTripMeta({ km: res.data.distance_km, min: res.data.duration_min, promoValid: res.data.promo_valid, surgeMult: res.data.surge_multiplier, surgeLabel: res.data.surge_label });
       setEstimates(res.data.estimates);
       loadNearby(pCoords.lat, pCoords.lng, vType);
     } catch { Alert.alert('Error', 'Could not load route'); }
@@ -285,8 +323,8 @@ export default function App() {
       }, { headers: { Authorization: `Bearer ${token}` } });
       setActiveRide(res.data.ride); setStage('ACTIVE');
     } catch (err) {
-      Alert.alert('Payment / Error', err.response?.data?.error || 'Request failed');
-      if (err.response?.data?.error?.includes('link')) setModalMode('PAY_WITH');
+      Alert.alert('Error', err.response?.data?.error || 'Request failed');
+      if (err.response?.data?.error?.includes('Link')) setModalMode('PAY_WITH');
     }
     setLoading(false);
   };
@@ -311,7 +349,18 @@ export default function App() {
     setLoading(false);
   };
 
-  // WELCOME / AUTH SCREEN
+  const submitReview = async () => {
+    if (revRating > 0 && completedReceipt?.id) {
+      try {
+        await axios.post(`${API}/api/rides/${completedReceipt.id}/review`, {
+          rating: revRating, tags: revTags.join(', '), comment: revComment
+        }, { headers: { Authorization: `Bearer ${token}` } });
+      } catch {}
+    }
+    setCompletedReceipt(null);
+    resetToHome();
+  };
+
   if (!user) {
     return (
       <View style={{ flex: 1, backgroundColor: '#fff' }}>
@@ -325,7 +374,7 @@ export default function App() {
           {isRegister && (
             <>
               <TextInput style={styles.authInput} placeholder={t.fullName} value={name} onChangeText={setName} />
-              <TextInput style={styles.authInput} placeholder={t.emailPh} keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+              <TextInput style={styles.authInput} placeholder={bn ? 'ইমেইল ঠিকানা' : 'Email Address'} keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
             </>
           )}
           <View style={styles.phoneRow}>
@@ -350,7 +399,6 @@ export default function App() {
           </TouchableOpacity>
         </ScrollView>
 
-        {/* Country Modal */}
         <Modal visible={countryModal} transparent animationType="slide">
           <View style={styles.modalBg}>
             <View style={styles.cancelCard}>
@@ -367,12 +415,11 @@ export default function App() {
           </View>
         </Modal>
 
-        {/* Forgot Password Modal */}
         <Modal visible={forgotOpen} transparent animationType="slide">
           <View style={styles.modalBg}>
             <View style={styles.cancelCard}>
               <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 10 }}>{t.resetTitle}</Text>
-              <TextInput style={styles.authInput} placeholder={t.emailPh} keyboardType="email-address" autoCapitalize="none" value={fEmail} onChangeText={setFEmail} />
+              <TextInput style={styles.authInput} placeholder={bn ? 'ইমেইল ঠিকানা' : 'Email Address'} keyboardType="email-address" autoCapitalize="none" value={fEmail} onChangeText={setFEmail} />
               {!fSent ? (
                 <TouchableOpacity style={styles.navyBtn} onPress={sendForgotCode} disabled={loading}><Text style={styles.navyBtnTxt}>{t.sendCode}</Text></TouchableOpacity>
               ) : (
@@ -462,9 +509,18 @@ export default function App() {
             else if (stage === 'CHOOSE') { if (rideType === 'RENTAL') setStage('MAIN'); else setStage('PLAN'); }
             else setStage('MAIN');
           }}><Ionicons name="arrow-back" size={22} color="#0F172A" /></TouchableOpacity>
+
           {stage === 'CHOOSE' && (
             <View style={styles.topRoutePill}><Text style={{ fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{pickupAddress} → {dropAddress} ({nearbyDrivers.length} live)</Text></View>
           )}
+
+          {stage === 'ACTIVE' && (
+            <TouchableOpacity style={[styles.topRoutePill, { flex: 0, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#0F172A' }]} onPress={() => setSsModal('SAFETY')}>
+              <Ionicons name="shield-checkmark" size={16} color="#00D2B8" />
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>{isTripRecording ? '🔴 REC' : 'Safety'}</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity style={styles.roundBtn} onPress={() => { fetchGPS(); setRecenterCount((c) => c + 1); }}><Ionicons name="locate" size={22} color="#0F172A" /></TouchableOpacity>
         </View>
 
@@ -472,17 +528,20 @@ export default function App() {
           <View style={styles.zoddirSheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>{rideType === 'RENTAL' ? `Rentals (${rentalHours} hr • ${rentalHours * 15} km)` : t.chooseRide}</Text>
-            <ScrollView style={{ maxHeight: 270 }} showsVerticalScrollIndicator={false}>
+            {tripMeta?.surgeMult > 1 && (
+              <View style={styles.surgePill}><Text style={{ color: '#0F172A', fontWeight: '900', fontSize: 11 }}>⚡ {tripMeta.surgeLabel || `${tripMeta.surgeMult}x High Demand`}</Text></View>
+            )}
+            <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={false}>
               {filteredEstimates.map((est) => {
                 const active = selectedVehicle === est.vehicle_type;
                 const meta = est.vehicle_type === 'XL'
-                  ? { name: 'Zoddir XL (Noah/HiAce)', desc: '6-7 Seats • Family/Group', icon: 'van-passenger', mci: true, badge: 'XL' }
+                  ? { name: 'Zoddir XL (Noah/HiAce)', desc: '6-7 Seats', icon: 'van-passenger', mci: true, badge: 'XL' }
                   : est.vehicle_type === 'PREMIUM'
-                  ? { name: 'Zoddir Premium', desc: 'Luxury Sedan (2010+) • 4 seats', icon: 'crown', mci: true, badge: 'VIP' }
+                  ? { name: 'Zoddir Premium', desc: 'Luxury Sedan', icon: 'crown', mci: true, badge: 'VIP' }
                   : est.vehicle_type === 'CAR'
                   ? { name: rideType === 'PARCEL' ? 'Parcel Car' : 'Zoddir Go', desc: 'AC Car • 4 seats', icon: 'car-sport', badge: 'Faster' }
                   : est.vehicle_type === 'CNG'
-                  ? { name: 'Zoddir CNG', desc: 'Auto Rickshaw • 3 seats', icon: 'rickshaw', mci: true, badge: null }
+                  ? { name: 'Zoddir CNG', desc: 'Auto • 3 seats', icon: 'rickshaw', mci: true, badge: null }
                   : { name: rideType === 'PARCEL' ? 'Parcel Bike' : 'Zoddir Moto', desc: 'Fast Bike', icon: 'motorbike', mci: true, badge: null };
                 return (
                   <TouchableOpacity key={est.vehicle_type} onPress={() => setSelectedVehicle(est.vehicle_type)} style={[styles.rideOption, active && styles.rideOptionActive]}>
@@ -549,7 +608,7 @@ export default function App() {
                     <Text style={{ fontSize: 20, fontWeight: '800', textAlign: 'center', color: '#0F172A' }}>{t.rideRequested}</Text>
                     <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>{t.findingDrivers} ({searchElapsed}s) • BDT {displayFare}</Text>
                     <ProgressBar />
-                    <View style={styles.detailBox}><Text style={{ fontWeight: '700' }}>{activeRide.pickup_address} → {activeRide.drop_address}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Payment: {activeRide.payment_method}</Text></View>
+                    <View style={styles.detailBox}><Text style={{ fontWeight: '700' }}>{activeRide.pickup_address} → {activeRide.drop_address}</Text></View>
                     <TouchableOpacity style={styles.cancelRedBtn} onPress={() => setCancelStep(1)}><Text style={{ color: '#e11d48', fontWeight: '800' }}>{t.cancelRide}</Text></TouchableOpacity>
                   </>
                 )}
@@ -562,7 +621,6 @@ export default function App() {
                   {activeRide.status === 'ACCEPTED' ? t.pickupIn : t.tripInProgress}
                 </Text>
 
-                {/* 4-DIGIT TRIP PIN CARD */}
                 {activeRide.status === 'ACCEPTED' && activeRide.ride_pin && (
                   <View style={styles.pinBanner}>
                     <Text style={{ color: '#cbd5e1', fontSize: 11 }}>{t.tripPinLabel}</Text>
@@ -619,6 +677,11 @@ export default function App() {
           paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod}
           promoCode={promoCode} setPromoCode={(c) => { setPromoCode(c); if (drop) openChooseRide(pickup, drop, dropAddress); }}
           driverInfo={activeRide} lang={lang} setLang={setLang} pubSettings={pubSettings}
+        />
+        <SupportAndSafetyModal
+          visible={!!ssModal} mode={ssModal} onClose={() => setSsModal(null)}
+          token={token} API={API} lang={lang}
+          recordOnTrip={recordOnTrip} setRecordOnTrip={setRecordOnTrip} savedTripAudioUri={savedTripAudioUri}
         />
       </View>
     );
@@ -729,6 +792,8 @@ export default function App() {
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', gap: 10, marginVertical: 16 }}>
             <TouchableOpacity style={styles.accTile} onPress={() => { loadSettings(); setModalMode('WALLET'); }}><Ionicons name="wallet" size={22} /><Text style={{ fontWeight: '700', fontSize: 11, marginTop: 4 }}>{t.wallet}</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.accTile} onPress={() => setSsModal('SAFETY')}><Ionicons name="shield-checkmark" size={22} color="#00D2B8" /><Text style={{ fontWeight: '700', fontSize: 11, marginTop: 4 }}>Safety Hub</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.accTile} onPress={() => setSsModal('SUPPORT')}><Ionicons name="chatbubbles" size={22} /><Text style={{ fontWeight: '700', fontSize: 11, marginTop: 4 }}>Support</Text></TouchableOpacity>
             <TouchableOpacity style={styles.accTile} onPress={() => setModalMode('ACCOUNT')}><Ionicons name="settings" size={22} /><Text style={{ fontWeight: '700', fontSize: 11, marginTop: 4 }}>{t.settings}</Text></TouchableOpacity>
           </View>
         </ScrollView>
@@ -751,18 +816,54 @@ export default function App() {
         })}
       </View>
 
-      <Modal visible={!!completedReceipt} transparent animationType="fade">
+      {/* 5-STAR TRIP REVIEW & RATING MODAL (WITH X SKIP BUTTON) */}
+      <Modal visible={!!completedReceipt} transparent animationType="slide">
         <View style={styles.modalBg}>
-          <View style={[styles.cancelCard, { borderRadius: 24, margin: 16 }]}>
-            <View style={{ alignItems: 'center', gap: 6 }}>
-              <Ionicons name="checkmark-circle" size={52} color="#00D2B8" />
-              <Text style={{ fontSize: 22, fontWeight: '800' }}>{t.tripCompleted}</Text>
-              <Text style={{ fontSize: 30, fontWeight: '900', color: '#0F172A' }}>BDT {completedReceipt?.final_fare}</Text>
-              <Text style={{ color: '#059669', fontWeight: '700' }}>
+          <View style={[styles.cancelCard, { borderRadius: 24, margin: 14 }]}>
+            <TouchableOpacity style={{ alignSelf: 'flex-end', padding: 4 }} onPress={() => { setCompletedReceipt(null); resetToHome(); }}>
+              <Ionicons name="close-circle" size={30} color="#64748b" />
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center', gap: 4 }}>
+              <Ionicons name="checkmark-circle" size={46} color="#00D2B8" />
+              <Text style={{ fontSize: 20, fontWeight: '800' }}>{t.tripCompleted} • BDT {completedReceipt?.final_fare}</Text>
+              <Text style={{ color: '#059669', fontWeight: '700', fontSize: 12 }}>
                 {completedReceipt?.payment_method === 'CASH' ? t.payCashDriver : `${t.autoPaidVia} ${completedReceipt?.payment_method}`}
               </Text>
+              <Text style={{ fontSize: 15, fontWeight: '800', marginTop: 10 }}>{bn ? 'ড্রাইভারকে রেটিং দিন' : 'Rate your Zoddir Driver'}</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginVertical: 8 }}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity key={star} onPress={() => setRevRating(star)}>
+                    <Ionicons name={revRating >= star ? 'star' : 'star-outline'} size={36} color={revRating >= star ? '#f59e0b' : '#cbd5e1'} />
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
-            <TouchableOpacity style={[styles.navyBtn, { marginTop: 18 }]} onPress={() => { setCompletedReceipt(null); resetToHome(); }}><Text style={styles.navyBtnTxt}>{t.done}</Text></TouchableOpacity>
+
+            {revRating > 0 && (
+              <>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginVertical: 8 }}>
+                  {(revRating >= 4 ? ['Best Service', 'Good Behaviour', 'Clean Car', 'Safe Driving'] : ['Bad Driving', 'Late', 'Rude']).map((tag) => {
+                    const sel = revTags.includes(tag);
+                    return (
+                      <TouchableOpacity key={tag} onPress={() => setRevTags(sel ? revTags.filter((x) => x !== tag) : [...revTags, tag])}
+                        style={[styles.tagChip, sel && { backgroundColor: '#0F172A' }]}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: sel ? '#A3E635' : '#0F172A' }}>{tag}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TextInput
+                  style={styles.authInput}
+                  placeholder={bn ? 'আপনার মতামত লিখুন...' : 'Write a custom review message...'}
+                  value={revComment}
+                  onChangeText={setRevComment}
+                />
+              </>
+            )}
+
+            <TouchableOpacity style={styles.navyBtn} onPress={submitReview}>
+              <Text style={styles.navyBtnTxt}>{revRating > 0 ? (bn ? 'রিভিউ জমা দিন' : 'Submit Review') : t.done}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -770,19 +871,20 @@ export default function App() {
       <ServicesModal
         visible={!!serviceModal} mode={serviceModal} onClose={() => setServiceModal(null)}
         user={user} token={token} API={API} pickupAddress={pickupAddress} lang={lang}
-        onStartRentalBook={(hrs) => {
-          setRideType('RENTAL'); setRentalHours(hrs);
-          openChooseRide(pickup, { lat: pickup.lat + 0.015, lng: pickup.lng + 0.015 }, `${hrs} Hr Package (${hrs * 15} km)`, 'CAR', 'RENTAL', hrs);
-        }}
+        onStartRentalBook={(hrs) => { setRideType('RENTAL'); setRentalHours(hrs); openChooseRide(pickup, { lat: pickup.lat + 0.015, lng: pickup.lng + 0.015 }, `${hrs} Hr Package (${hrs * 15} km)`, 'CAR', 'RENTAL', hrs); }}
         onStartParcelBook={(meta) => { setRideType('PARCEL'); setParcelMeta(meta); setSelectedVehicle('BIKE'); setStage('PLAN'); }}
       />
-
       <AccountModal
         visible={!!modalMode} mode={modalMode} onClose={() => setModalMode(null)}
         user={user} token={token} API={API} onUpdateUser={setUser} onLogout={() => { setUser(null); setToken(''); }}
         paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod}
         promoCode={promoCode} setPromoCode={setPromoCode} driverInfo={activeRide}
         lang={lang} setLang={setLang} pubSettings={pubSettings}
+      />
+      <SupportAndSafetyModal
+        visible={!!ssModal} mode={ssModal} onClose={() => setSsModal(null)}
+        token={token} API={API} lang={lang}
+        recordOnTrip={recordOnTrip} setRecordOnTrip={setRecordOnTrip} savedTripAudioUri={savedTripAudioUri}
       />
     </View>
   );
@@ -832,7 +934,8 @@ const styles = StyleSheet.create({
   topRoutePill: { flex: 1, backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, elevation: 6 },
   zoddirSheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 22, paddingTop: 10, elevation: 20 },
   sheetHandle: { width: 40, height: 4, backgroundColor: '#cbd5e1', borderRadius: 4, alignSelf: 'center', marginBottom: 10 },
-  sheetTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', textAlign: 'center', marginBottom: 10 },
+  sheetTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', textAlign: 'center', marginBottom: 8 },
+  surgePill: { backgroundColor: '#A3E635', alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, marginBottom: 8 },
   rideOption: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, borderRadius: 14, marginBottom: 6, borderWidth: 2, borderColor: 'transparent' },
   rideOptionActive: { borderColor: '#00D2B8', backgroundColor: '#f0fdfa' },
   vehicleImgBox: { width: 46, height: 46, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
@@ -850,5 +953,6 @@ const styles = StyleSheet.create({
   cancelRedBtn: { backgroundColor: '#ffe4e6', paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' },
   cancelCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
-  reasonRow: { paddingVertical: 14, borderBottomWidth: 1, borderColor: '#f1f5f9' }
+  reasonRow: { paddingVertical: 14, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  tagChip: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 }
 });

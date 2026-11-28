@@ -2,7 +2,10 @@ import React, { useRef, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], isOnline = false, recenterCount = 0, dark = false }) {
+export default function DriverMap({
+  driverLoc, pickup, drop, routeCoords = [], surgeZones = [],
+  isOnline = false, recenterCount = 0, dark = false, onSurgeTap
+}) {
   const webRef = useRef(null);
 
   const html = `
@@ -20,7 +23,7 @@ export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], i
         @keyframes sonar { 0% { transform: scale(0.7); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
         .pickup-pin { width: 18px; height: 18px; background: #00D2B8; border: 3px solid #0F172A; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
         .drop-pin { width: 16px; height: 16px; background: #A3E635; border: 3px solid #0F172A; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
-        .zone-pill { background: #0F172A; color: #00D2B8; border: 1.5px solid #00D2B8; font-family: sans-serif; font-size: 11px; font-weight: 800; padding: 5px 10px; border-radius: 16px; box-shadow: 0 3px 8px rgba(0,0,0,0.25); white-space: nowrap; }
+        .surge-cloud-badge { background: rgba(249,115,22,0.92); color: #fff; border: 2px solid #fff; font-family: sans-serif; font-size: 11px; font-weight: 900; padding: 5px 10px; border-radius: 16px; box-shadow: 0 3px 10px rgba(249,115,22,0.45); cursor: pointer; white-space: nowrap; }
       </style>
     </head>
     <body>
@@ -30,29 +33,41 @@ export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], i
           container: 'map',
           style: '${dark ? 'https://tiles.openfreemap.org/styles/positron' : 'https://tiles.openfreemap.org/styles/liberty'}',
           center: [${driverLoc.lng}, ${driverLoc.lat}],
-          zoom: 14.8,
+          zoom: 15,
           attributionControl: false
         });
 
-        let mapLoaded = false, pending = null, lastRecenter = 0, centeredOnce = false;
+        let mapLoaded = false, pending = null, lastRecenter = 0, centeredOnce = false, lastRouteKey = '';
 
         const dWrap = document.createElement('div'); dWrap.className = 'puck-wrap';
         dWrap.innerHTML = '<div id="sonar" class="puck-pulse"></div><div class="puck-core">▲</div>';
         const driverMarker = new maplibregl.Marker({ element: dWrap }).setLngLat([${driverLoc.lng}, ${driverLoc.lat}]).addTo(map);
 
-        const zEl = document.createElement('div'); zEl.className = 'zone-pill'; zEl.innerText = '✈️ DAC পিকআপ জোন';
-        new maplibregl.Marker({ element: zEl }).setLngLat([90.402, 23.848]).addTo(map);
+        let pickupMarker = null, dropMarker = null, surgeMarkers = [];
 
-        let pickupMarker = null, dropMarker = null;
+        function makeCircle(lng, lat, km) {
+          const pts = [];
+          const R = 6371;
+          for (let i = 0; i <= 48; i++) {
+            const ang = (i * 2 * Math.PI) / 48;
+            const dLat = (km / R) * (180 / Math.PI) * Math.sin(ang);
+            const dLng = ((km / R) * (180 / Math.PI) * Math.cos(ang)) / Math.cos((lat * Math.PI) / 180);
+            pts.push([lng + dLng, lat + dLat]);
+          }
+          return pts;
+        }
 
         map.on('load', () => {
           mapLoaded = true;
+          map.addSource('surge-outer', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+          map.addLayer({ id: 'surge-outer-fill', type: 'fill', source: 'surge-outer', paint: { 'fill-color': '#00D2B8', 'fill-opacity': 0.16 } });
+
+          map.addSource('surge-inner', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+          map.addLayer({ id: 'surge-inner-fill', type: 'fill', source: 'surge-inner', paint: { 'fill-color': '#f97316', 'fill-opacity': 0.24 } });
+
           map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } } });
-          map.addLayer({
-            id: 'route-line', type: 'line', source: 'route',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#0F172A', 'line-width': 5 }
-          });
+          map.addLayer({ id: 'route-line', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#0F172A', 'line-width': 5 } });
+
           if (pending) applyUpdate(pending);
         });
 
@@ -74,6 +89,22 @@ export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], i
             return;
           }
 
+          // Surge Clouds আপডেট
+          surgeMarkers.forEach(m => m.remove());
+          surgeMarkers = [];
+          const outFeatures = [], inFeatures = [];
+          (data.surgeZones || []).forEach(z => {
+            outFeatures.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [makeCircle(z.center_lng, z.center_lat, Number(z.radius_2_km || 10))] } });
+            inFeatures.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [makeCircle(z.center_lng, z.center_lat, Number(z.radius_1_km || 5))] } });
+            const el = document.createElement('div');
+            el.className = 'surge-cloud-badge';
+            el.innerText = '⚡ ' + z.name + ' ' + z.mult_1 + 'x';
+            el.onclick = () => window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SURGE_TAP', zone: z }));
+            surgeMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([z.center_lng, z.center_lat]).addTo(map));
+          });
+          if (map.getSource('surge-outer')) map.getSource('surge-outer').setData({ type: 'FeatureCollection', features: outFeatures });
+          if (map.getSource('surge-inner')) map.getSource('surge-inner').setData({ type: 'FeatureCollection', features: inFeatures });
+
           if (data.pickup) {
             if (!pickupMarker) {
               const pEl = document.createElement('div'); pEl.className = 'pickup-pin';
@@ -88,14 +119,19 @@ export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], i
             } else dropMarker.setLngLat([data.drop.lng, data.drop.lat]);
           } else if (dropMarker) { dropMarker.remove(); dropMarker = null; }
 
+          // শুধু রুট পরিবর্তন হলেই fitBounds করবে — প্রতি ৪ সেকেন্ডে জুম রিসেট করবে না!
           const src = map.getSource('route');
           if (src) {
             const coords = (data.routeCoords && data.routeCoords.length > 1) ? data.routeCoords.map(c => [c[1], c[0]]) : [];
             src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } });
-            if (coords.length > 1) {
+            const rKey = coords.length > 1 ? (coords[0][0].toFixed(4) + ',' + coords[coords.length - 1][0].toFixed(4)) : '';
+            if (rKey && rKey !== lastRouteKey) {
+              lastRouteKey = rKey;
               const b = new maplibregl.LngLatBounds();
               coords.forEach(c => b.extend(c));
               map.fitBounds(b, { padding: { top: 95, bottom: 300, left: 45, right: 45 }, maxZoom: 15.8 });
+            } else if (!rKey) {
+              lastRouteKey = '';
             }
           }
         }
@@ -106,9 +142,9 @@ export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], i
   `;
 
   useEffect(() => {
-    const payload = JSON.stringify({ driverLoc, pickup, drop, routeCoords, isOnline, recenterCount });
+    const payload = JSON.stringify({ driverLoc, pickup, drop, routeCoords, surgeZones, isOnline, recenterCount });
     webRef.current?.injectJavaScript(`if(window.updateDriverMap) window.updateDriverMap(${payload}); true;`);
-  }, [driverLoc, pickup, drop, routeCoords, isOnline, recenterCount]);
+  }, [driverLoc, pickup, drop, routeCoords, surgeZones, isOnline, recenterCount]);
 
   return (
     <View style={styles.container}>
@@ -120,6 +156,12 @@ export default function DriverMap({ driverLoc, pickup, drop, routeCoords = [], i
         androidLayerType="hardware"
         javaScriptEnabled={true}
         domStorageEnabled={true}
+        onMessage={(event) => {
+          try {
+            const msg = JSON.parse(event.nativeEvent.data);
+            if (msg.type === 'SURGE_TAP' && onSurgeTap) onSurgeTap(msg.zone);
+          } catch {}
+        }}
       />
     </View>
   );

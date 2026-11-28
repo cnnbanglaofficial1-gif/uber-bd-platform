@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet, Text, View, Modal, TouchableOpacity, TextInput,
-  ScrollView, Image, Alert, ActivityIndicator, Share, Linking
+  ScrollView, Image, Alert, ActivityIndicator, Share, Linking, Switch
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -10,11 +10,12 @@ import { PaymentLogo } from './BrandIcons';
 import { STRINGS } from './i18n';
 
 const BRANDS = ['Toyota', 'Honda', 'Suzuki', 'Yamaha', 'Bajaj', 'TVS', 'Noah', 'HiAce'];
-const YEARS = ['2026', '2025', '2024', '2023', '2022', '2020', '2018', '2015', '2010', '2005'];
+const YEARS = ['2026', '2025', '2024', '2023', '2022', '2020', '2018', '2015', '2010', '2005', '2004'];
 
 export default function DriverMenus({
   screen, setScreen, onClose, user, token, API, onRefreshUser, onLogout,
-  wallet, txns, withdraws, duePayments = [], onReloadWallet, lang, setLang, nightMode, setNightMode
+  wallet, txns, withdraws, duePayments = [], onReloadWallet, lang, setLang, nightMode, setNightMode,
+  recordOnTrip, setRecordOnTrip, onOpenSafety, onOpenSupport
 }) {
   const t = STRINGS[lang || 'en'];
   const dp = user?.driverProfile || {};
@@ -48,6 +49,7 @@ export default function DriverMenus({
   const [earnSubTab, setEarnSubTab] = useState('DAILY');
   const [dailyList, setDailyList] = useState([]);
   const [tripList, setTripList] = useState([]);
+  const [refData, setRefData] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -66,14 +68,16 @@ export default function DriverMenus({
       axios.get(`${API}/api/settings/public`).then((r) => {
         setPubSettings(r.data || {});
         const map = r.data?.required_docs || {};
-        const vt = dp.vehicle_type || 'BIKE';
-        setRequiredDocs(map[vt] || ['Vehicle Registration', 'National ID (NID)', 'Driving License']);
+        setRequiredDocs(map[dp.vehicle_type || 'BIKE'] || ['Vehicle Registration', 'National ID (NID)', 'Driving License']);
       }).catch(() => {});
     }
     if (screen === 'EARNINGS_DETAIL' && token) {
       axios.get(`${API}/api/driver/earnings-detail`, { headers: { Authorization: `Bearer ${token}` } })
-        .then((r) => { setDailyList(r.data.daily || []); setTripList(r.data.trips || []); })
-        .catch(() => {});
+        .then((r) => { setDailyList(r.data.daily || []); setTripList(r.data.trips || []); }).catch(() => {});
+    }
+    if (screen === 'REFER' && token) {
+      axios.get(`${API}/api/driver/referral-status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => setRefData(r.data)).catch(() => {});
     }
   }, [user, screen, wallet?.balance]);
 
@@ -103,9 +107,8 @@ export default function DriverMenus({
       const res = await fn({ mediaTypes: ['images'], allowsEditing: true, quality: 0.25, base64: true });
       if (!res.canceled && res.assets[0]?.base64) {
         const b64 = `data:image/jpeg;base64,${res.assets[0].base64}`;
-        if (docTarget === 'AVATAR') {
-          setPAvatar(b64); await saveAll({ avatar_url: b64 }); setScreen('PROFILE');
-        } else {
+        if (docTarget === 'AVATAR') { setPAvatar(b64); await saveAll({ avatar_url: b64 }); setScreen('PROFILE'); }
+        else {
           const updated = { ...docsJson, [docTarget]: b64 };
           setDocsJson(updated);
           await saveAll({ docs_json: { [docTarget]: b64 } });
@@ -154,9 +157,11 @@ export default function DriverMenus({
               { lbl: t.documents, icon: 'file-document-check', to: 'DOCUMENTS' },
               { lbl: 'Wallet & Payouts', icon: 'wallet', to: 'WALLET' },
               { lbl: 'Personal Info & Payout Numbers', icon: 'account-cog', to: 'MANAGE_ACCOUNT' },
+              { lbl: 'Safety Hub (999 & Audio Rec)', icon: 'shield-check', fn: () => { onClose(); onOpenSafety(); } },
+              { lbl: 'Contact Support (Chat)', icon: 'chat', fn: () => { onClose(); onOpenSupport(); } },
               { lbl: t.settings, icon: 'cog', to: 'SETTINGS' }
             ].map((item) => (
-              <TouchableOpacity key={item.lbl} style={styles.menuRow} onPress={() => setScreen(item.to)}>
+              <TouchableOpacity key={item.lbl} style={styles.menuRow} onPress={() => item.fn ? item.fn() : setScreen(item.to)}>
                 <View style={styles.menuIconBox}><MaterialCommunityIcons name={item.icon} size={22} color="#00D2B8" /></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.menuTxt}>{item.lbl}</Text>
@@ -187,7 +192,7 @@ export default function DriverMenus({
                   <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{dp.vehicle_model || dp.vehicle_type}</Text>
                   <Text style={{ fontSize: 13, color: '#64748b' }}>{dp.plate_number || 'No Plate'}</Text>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: dp.is_approved ? '#059669' : '#d97706', marginTop: 2 }}>
-                    {dp.is_approved ? 'Approved' : 'Pending Approval'} {dp.allow_premium ? '• Premium Active' : ''}
+                    {dp.is_approved ? 'Approved' : 'Pending'} {dp.allow_go ? '• Go' : ''}{dp.allow_premium ? ' • Premium' : ''}{dp.allow_xl ? ' • XL' : ''}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#475569" />
@@ -217,7 +222,7 @@ export default function DriverMenus({
             </ScrollView>
             <TextInput style={styles.input} value={vMake} onChangeText={setVMake} />
             <Text style={styles.lbl}>Model</Text><TextInput style={styles.input} value={vModel} onChangeText={setVModel} placeholder="Noah / Corolla / FZ-S" />
-            <Text style={styles.lbl}>Year (2010+ eligible for Zoddir Premium)</Text>
+            <Text style={styles.lbl}>Year (2004+ eligible for Go/Premium)</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
               {YEARS.map((y) => (
                 <TouchableOpacity key={y} onPress={() => setVYear(y)} style={[styles.miniPill, vYear === y && { backgroundColor: '#0F172A' }]}>
@@ -233,7 +238,6 @@ export default function DriverMenus({
           </ScrollView>
         )}
 
-        {/* DYNAMIC DOCUMENTS FROM ADMIN PANEL */}
         {screen === 'DOCUMENTS' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={() => setScreen('ACCOUNT')}><Ionicons name="arrow-back" size={24} color="#0F172A" /></TouchableOpacity>
@@ -243,12 +247,7 @@ export default function DriverMenus({
               const done = !!docsJson[docName];
               return (
                 <TouchableOpacity key={docName} style={styles.docRow} onPress={() => { setDocTarget(docName); setScreen('DOC_CAPTURE'); }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A' }}>{docName}</Text>
-                    <Text style={{ fontSize: 12, color: done ? '#059669' : '#00D2B8', fontWeight: '700', marginTop: 2 }}>
-                      {done ? 'Uploaded' : 'Tap to upload'}
-                    </Text>
-                  </View>
+                  <View style={{ flex: 1 }}><Text style={{ fontSize: 16, fontWeight: '700' }}>{docName}</Text><Text style={{ fontSize: 12, color: done ? '#059669' : '#00D2B8', fontWeight: '700' }}>{done ? 'Uploaded' : 'Tap to upload'}</Text></View>
                   <Ionicons name={done ? 'checkmark-circle' : 'cloud-upload-outline'} size={22} color={done ? '#059669' : '#00D2B8'} />
                 </TouchableOpacity>
               );
@@ -357,21 +356,15 @@ export default function DriverMenus({
             </View>
             <ScrollView style={{ flex: 1, padding: 18 }}>
               {earnSubTab === 'DAILY' ? dailyList.map((d) => (
-                <View key={d.day} style={styles.tripCard}>
-                  <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 15 }}>{d.day}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{d.trips} trips • Total ৳{d.total_fare}</Text></View>
-                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#059669' }}>+৳{d.total_earning}</Text>
-                </View>
+                <View key={d.day} style={styles.tripCard}><View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 15 }}>{d.day}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{d.trips} trips • Total ৳{d.total_fare}</Text></View><Text style={{ fontSize: 18, fontWeight: '900', color: '#059669' }}>+৳{d.total_earning}</Text></View>
               )) : tripList.map((tr) => (
                 <View key={tr.id} style={styles.tripCard}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '800', fontSize: 14 }}>#{tr.id} [{tr.ride_type || 'RIDE'}] • {tr.payment_method}</Text>
+                    <Text style={{ fontWeight: '800', fontSize: 14 }}>#{tr.id} [{tr.ride_type || 'RIDE'}] • {tr.payment_method} {tr.surge_multiplier > 1 ? `(${tr.surge_multiplier}x)` : ''}</Text>
                     <Text style={{ fontSize: 12, color: '#475569' }}>{tr.pickup_address} → {tr.drop_address}</Text>
                     <Text style={{ fontSize: 11, color: '#64748b' }}>{tr.actual_distance_km} km • {tr.actual_duration_min} min</Text>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 16, fontWeight: '900', color: '#059669' }}>+৳{tr.driver_earning}</Text>
-                    <Text style={{ fontSize: 10, color: '#e11d48' }}>Comm -৳{tr.platform_commission}</Text>
-                  </View>
+                  <View style={{ alignItems: 'flex-end' }}><Text style={{ fontSize: 16, fontWeight: '900', color: '#059669' }}>+৳{tr.driver_earning}</Text><Text style={{ fontSize: 10, color: '#e11d48' }}>Comm -৳{tr.platform_commission}</Text></View>
                 </View>
               ))}
             </ScrollView>
@@ -392,6 +385,10 @@ export default function DriverMenus({
                 <Text style={{ color: '#A3E635', fontSize: 12, fontWeight: '700', marginTop: 6 }}>Tap to change photo</Text>
               </TouchableOpacity>
               <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 6 }}>{user?.name}</Text>
+            </View>
+            <View style={{ padding: 20, flexDirection: 'row', gap: 10 }}>
+              <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800' }}>{dp.rating || '5.00'} ★</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Rating</Text></View>
+              <View style={styles.statCard}><Text style={{ fontSize: 20, fontWeight: '800' }}>{txns.length}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>Activity</Text></View>
             </View>
           </ScrollView>
         )}
@@ -421,14 +418,51 @@ export default function DriverMenus({
               <Ionicons name="moon-outline" size={22} color="#0F172A" />
               <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>{t.nightMode}</Text><Text style={{ fontSize: 12, color: '#64748b' }}>{nightMode ? 'ON' : 'OFF'}</Text></View>
             </TouchableOpacity>
+            <View style={styles.docRow}>
+              <Ionicons name="mic-outline" size={22} color="#0F172A" />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={{ fontWeight: '700', fontSize: 16 }}>{lang === 'bn' ? 'ট্রিপ চলাকালীন অডিও রেকর্ড' : 'Record Audio When Trip Starts'}</Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>{recordOnTrip ? 'ON' : 'OFF'}</Text>
+              </View>
+              <Switch value={!!recordOnTrip} onValueChange={setRecordOnTrip} trackColor={{ true: '#00D2B8' }} />
+            </View>
+            <TouchableOpacity style={styles.docRow} onPress={() => { onClose(); onOpenSafety(); }}>
+              <Ionicons name="shield-checkmark" size={22} color="#00D2B8" />
+              <View style={{ flex: 1, marginLeft: 12 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>Safety Hub (999 Call)</Text></View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
           </ScrollView>
         )}
 
         {screen === 'REFER' && (
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color="#0F172A" /></TouchableOpacity>
-            <Text style={{ fontSize: 26, fontWeight: '800', marginTop: 12 }}>{t.referEarn}</Text>
-            <TouchableOpacity style={[styles.navyBtn, { marginTop: 24 }]} onPress={() => Share.share({ message: `Join Zoddir Driver & earn 500 BDT! Code: ${user?.phone}` })}><Text style={styles.navyBtnTxt}>Invite Friends</Text></TouchableOpacity>
+            <Text style={{ fontSize: 26, fontWeight: '800', marginTop: 12 }}>Zoddir Driver Referrals</Text>
+            <View style={styles.walletBox}>
+              <Text style={{ color: '#00D2B8', fontWeight: '800', fontSize: 14 }}>Your Referral Number: {user?.phone}</Text>
+              <Text style={{ color: '#A3E635', fontWeight: '900', fontSize: 22, marginTop: 6 }}>
+                Earn ৳{refData?.program?.bonus || 500} per friend!
+              </Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 12, marginTop: 4 }}>
+                When your referred driver completes {refData?.program?.target_trips || 15} trips within {refData?.program?.days_limit || 30} days, you automatically receive the bonus!
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.navyBtn} onPress={() => Share.share({ message: `Join Zoddir Driver & earn! Use my Referral Phone: ${user?.phone}` })}>
+              <Text style={styles.navyBtnTxt}>Share Referral Number</Text>
+            </TouchableOpacity>
+
+            <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8 }}>Referred Drivers ({refData?.referred_drivers?.length || 0})</Text>
+            {(refData?.referred_drivers || []).map((rd) => (
+              <View key={rd.id} style={styles.tripCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '800' }}>{rd.name} ({rd.phone})</Text>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Trips: {rd.completed_trips} / {rd.referral_target_trips}</Text>
+                </View>
+                <Text style={{ fontWeight: '800', color: rd.referral_bonus_paid ? '#059669' : '#d97706' }}>
+                  {rd.referral_bonus_paid ? `Paid ৳${rd.referral_bonus_amount}` : 'In Progress'}
+                </Text>
+              </View>
+            ))}
           </ScrollView>
         )}
       </View>
