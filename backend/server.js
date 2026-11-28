@@ -13,7 +13,7 @@ const { haversineKm, calculateActualDistanceKm } = require('./fareCalculator');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 const DEFAULT_DOCS_CONFIG = {
   BIKE: ['Vehicle Registration', 'National ID (NID)', 'Driving License', 'Tax Token'],
@@ -59,6 +59,11 @@ const BD_PLACES = [
       ALTER TABLE users ADD COLUMN IF NOT EXISTS card_last4 VARCHAR(10);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(120);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by_id INT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_bonus_paid BOOLEAN DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_target_trips INT DEFAULT 15;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_bonus_amount NUMERIC(10,2) DEFAULT 500;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_deadline TIMESTAMP;
       CREATE UNIQUE INDEX IF NOT EXISTS users_phone_role_vkey_idx ON users (phone, role, vehicle_key);
 
       ALTER TABLE driver_profiles DROP CONSTRAINT IF EXISTS driver_profiles_vehicle_type_check;
@@ -69,7 +74,9 @@ const BD_PLACES = [
       ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS docs_json JSONB DEFAULT '{}'::jsonb;
       ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) DEFAULT 'PENDING';
       ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+      ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS allow_go BOOLEAN DEFAULT TRUE;
       ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS allow_premium BOOLEAN DEFAULT FALSE;
+      ALTER TABLE driver_profiles ADD COLUMN IF NOT EXISTS allow_xl BOOLEAN DEFAULT FALSE;
 
       ALTER TABLE rides DROP CONSTRAINT IF EXISTS rides_payment_method_check;
       ALTER TABLE rides ADD CONSTRAINT rides_payment_method_check CHECK (payment_method IN ('CASH', 'BKASH', 'NAGAD', 'CARD'));
@@ -77,6 +84,8 @@ const BD_PLACES = [
       ALTER TABLE rides ADD COLUMN IF NOT EXISTS ride_type VARCHAR(20) DEFAULT 'RIDE';
       ALTER TABLE rides ADD COLUMN IF NOT EXISTS meta_json JSONB DEFAULT '{}'::jsonb;
       ALTER TABLE rides ADD COLUMN IF NOT EXISTS ride_pin VARCHAR(10);
+      ALTER TABLE rides ADD COLUMN IF NOT EXISTS surge_multiplier NUMERIC(4,2) DEFAULT 1.00;
+      ALTER TABLE rides ADD COLUMN IF NOT EXISTS surge_label VARCHAR(100);
 
       INSERT INTO vehicle_rates (vehicle_type, base_fare, per_km_rate, per_min_rate, min_fare, commission_percent) VALUES
         ('PREMIUM', 120, 38, 4.0, 180, 20),
@@ -97,22 +106,42 @@ const BD_PLACES = [
         ('nagad_qr_url', ''),
         ('nagad_pay_link', ''),
         ('bank_details', 'City Bank • A/C: 1234567890 • Mirpur Branch'),
-        ('required_docs_json', '${JSON.stringify(DEFAULT_DOCS_CONFIG)}')
+        ('required_docs_json', '${JSON.stringify(DEFAULT_DOCS_CONFIG)}'),
+        ('referral_bonus_amount', '500'),
+        ('referral_target_trips', '15'),
+        ('referral_days_limit', '30'),
+        ('peak_hour_enabled', 'false'),
+        ('peak_hour_start', '08:00'),
+        ('peak_hour_end', '11:00'),
+        ('peak_hour_multiplier', '1.25')
       ON CONFLICT (key) DO NOTHING;
 
-      CREATE TABLE IF NOT EXISTS due_payments (
-        id SERIAL PRIMARY KEY, driver_id INT REFERENCES users(id), amount NUMERIC(10,2) NOT NULL,
-        method VARCHAR(20) NOT NULL, trx_id VARCHAR(100), status VARCHAR(20) DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      CREATE TABLE IF NOT EXISTS due_payments (id SERIAL PRIMARY KEY, driver_id INT REFERENCES users(id), amount NUMERIC(10,2) NOT NULL, method VARCHAR(20) NOT NULL, trx_id VARCHAR(100), status VARCHAR(20) DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS monthly_rentals (id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id), vehicle_type VARCHAR(40), brand_model VARCHAR(120), purpose VARCHAR(30), start_date VARCHAR(40), start_time VARCHAR(40), duration_text VARCHAR(60), fuel_option VARCHAR(60), offered_budget NUMERIC(12,2), phone VARCHAR(30), email VARCHAR(120), location TEXT, notes TEXT, status VARCHAR(20) DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS password_resets (id SERIAL PRIMARY KEY, email VARCHAR(120) NOT NULL, role VARCHAR(20) NOT NULL, code VARCHAR(10) NOT NULL, expires_at TIMESTAMP NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+
+      CREATE TABLE IF NOT EXISTS ride_reviews (
+        id SERIAL PRIMARY KEY, ride_id INT UNIQUE REFERENCES rides(id), rider_id INT REFERENCES users(id),
+        driver_id INT REFERENCES users(id), rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        tags TEXT, comment TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      CREATE TABLE IF NOT EXISTS monthly_rentals (
-        id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id), vehicle_type VARCHAR(40), brand_model VARCHAR(120),
-        purpose VARCHAR(30), start_date VARCHAR(40), start_time VARCHAR(40), duration_text VARCHAR(60),
-        fuel_option VARCHAR(60), offered_budget NUMERIC(12,2), phone VARCHAR(30), email VARCHAR(120),
-        location TEXT, notes TEXT, status VARCHAR(20) DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id), user_role VARCHAR(20),
+        status VARCHAR(20) DEFAULT 'OPEN', updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      CREATE TABLE IF NOT EXISTS password_resets (
-        id SERIAL PRIMARY KEY, email VARCHAR(120) NOT NULL, role VARCHAR(20) NOT NULL,
-        code VARCHAR(10) NOT NULL, expires_at TIMESTAMP NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      CREATE TABLE IF NOT EXISTS support_messages (
+        id SERIAL PRIMARY KEY, ticket_id INT REFERENCES support_tickets(id) ON DELETE CASCADE,
+        sender_role VARCHAR(20) NOT NULL, msg_type VARCHAR(20) DEFAULT 'TEXT',
+        content TEXT, file_data TEXT, file_name TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS surge_zones (
+        id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, center_lat DOUBLE PRECISION NOT NULL,
+        center_lng DOUBLE PRECISION NOT NULL, radius_1_km NUMERIC(5,2) DEFAULT 5, mult_1 NUMERIC(4,2) DEFAULT 1.3,
+        radius_2_km NUMERIC(5,2) DEFAULT 10, mult_2 NUMERIC(4,2) DEFAULT 1.15,
+        start_time VARCHAR(10) DEFAULT '00:00', end_time VARCHAR(10) DEFAULT '23:59',
+        is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
   } catch (e) { console.error('Migration note:', e.message); }
@@ -120,6 +149,14 @@ const BD_PLACES = [
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
+
+function getBDHHMM() {
+  return new Date(Date.now() + 6 * 3600 * 1000).toISOString().slice(11, 16);
+}
+function isTimeInRange(nowHHMM, start, end) {
+  if (!start || !end) return true;
+  return start <= end ? (nowHHMM >= start && nowHHMM <= end) : (nowHHMM >= start || nowHHMM <= end);
+}
 
 async function getSettingsMap() {
   const res = await pool.query('SELECT key, value FROM app_settings');
@@ -130,17 +167,38 @@ async function getSettingsMap() {
   return map;
 }
 
+async function computeSurgeAt(lat, lng) {
+  const cfg = await getSettingsMap();
+  const now = getBDHHMM();
+  let mult = 1.0;
+  let label = null;
+
+  if (cfg.peak_hour_enabled === 'true' && isTimeInRange(now, cfg.peak_hour_start, cfg.peak_hour_end)) {
+    const pm = Number(cfg.peak_hour_multiplier || 1.2);
+    if (pm > mult) { mult = pm; label = `Peak Hour (${pm}x)`; }
+  }
+
+  const zones = (await pool.query('SELECT * FROM surge_zones WHERE is_active = TRUE')).rows;
+  for (const z of zones) {
+    if (!isTimeInRange(now, z.start_time, z.end_time)) continue;
+    const dist = haversineKm(lat, lng, z.center_lat, z.center_lng);
+    if (dist <= Number(z.radius_1_km) && Number(z.mult_1) > mult) {
+      mult = Number(z.mult_1); label = `${z.name} Surge (${mult}x)`;
+    } else if (dist <= Number(z.radius_2_km) && Number(z.mult_2) > mult) {
+      mult = Number(z.mult_2); label = `${z.name} Zone (${mult}x)`;
+    }
+  }
+  return { multiplier: Number(mult.toFixed(2)), label };
+}
+
 function normalizePhoneCandidates(rawPhone, dialCode = '+880') {
   const clean = String(rawPhone || '').replace(/[\s-]/g, '');
   const list = new Set([clean]);
   if (clean.startsWith('+')) {
-    list.add(clean.replace(/^\+880/, '0'));
-    list.add(clean.replace(/^\+880/, ''));
+    list.add(clean.replace(/^\+880/, '0')); list.add(clean.replace(/^\+880/, ''));
   } else {
     const noZero = clean.replace(/^0+/, '');
-    list.add(`${dialCode}${noZero}`);
-    list.add(`0${noZero}`);
-    list.add(noZero);
+    list.add(`${dialCode}${noZero}`); list.add(`0${noZero}`); list.add(noZero);
   }
   return Array.from(list);
 }
@@ -160,62 +218,42 @@ function auth(roles = []) {
   };
 }
 
-app.get('/', (req, res) => res.json({ status: 'Zoddir Platform Backend Running 🚀', time: new Date() }));
+app.get('/', (req, res) => res.json({ status: 'Zoddir Platform Backend Running', time: new Date() }));
 app.get('/api/settings/public', async (req, res) => res.json(await getSettingsMap()));
 
-// ফাস্ট বাংলাদেশ অ্যাড্রেস সার্চ API (Photon + Nominatim + Local Fallback)
+app.get('/api/surge/active', async (req, res) => {
+  const cfg = await getSettingsMap();
+  const now = getBDHHMM();
+  const zones = (await pool.query('SELECT * FROM surge_zones WHERE is_active = TRUE')).rows.filter((z) => isTimeInRange(now, z.start_time, z.end_time));
+  const peakActive = cfg.peak_hour_enabled === 'true' && isTimeInRange(now, cfg.peak_hour_start, cfg.peak_hour_end);
+  res.json({
+    zones,
+    peak_hour: peakActive ? { multiplier: Number(cfg.peak_hour_multiplier || 1.2), start: cfg.peak_hour_start, end: cfg.peak_hour_end } : null
+  });
+});
+
 app.get('/api/places/search', async (req, res) => {
   const q = String(req.query.q || '').trim();
-  const lat = Number(req.query.lat || 23.8103);
-  const lng = Number(req.query.lng || 90.4125);
+  const lat = Number(req.query.lat || 23.8103), lng = Number(req.query.lng || 90.4125);
   if (q.length < 2) return res.json({ places: [] });
-
   const results = [];
-  const lower = q.toLowerCase();
-  BD_PLACES.forEach((p) => {
-    if (p.name.toLowerCase().includes(lower)) {
-      results.push({ name: p.name.split(',')[0], subtitle: p.name, lat: p.lat, lng: p.lng });
-    }
-  });
-
+  BD_PLACES.forEach((p) => { if (p.name.toLowerCase().includes(q.toLowerCase())) results.push({ name: p.name.split(',')[0], subtitle: p.name, lat: p.lat, lng: p.lng }); });
   try {
-    const nom = await axios.get(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&countrycodes=bd&format=json&limit=6&addressdetails=1`, {
-      headers: { 'User-Agent': 'ZoddirRideApp/1.0 (support@zoddir.com)' },
-      timeout: 3500
-    });
-    if (Array.isArray(nom.data)) {
-      nom.data.forEach((item) => {
-        const title = item.name || item.display_name.split(',')[0];
-        const sub = item.display_name.split(',').slice(0, 3).join(', ');
-        results.push({ name: title, subtitle: sub, lat: Number(item.lat), lng: Number(item.lon) });
-      });
-    }
+    const nom = await axios.get(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&countrycodes=bd&format=json&limit=6`, { headers: { 'User-Agent': 'ZoddirRideApp/1.0' }, timeout: 3500 });
+    (nom.data || []).forEach((item) => results.push({ name: item.name || item.display_name.split(',')[0], subtitle: item.display_name.split(',').slice(0, 3).join(', '), lat: Number(item.lat), lng: Number(item.lon) }));
   } catch {}
-
   if (results.length < 3) {
     try {
       const ph = await axios.get(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=5&lat=${lat}&lon=${lng}`, { timeout: 3000 });
-      (ph.data?.features || []).forEach((f) => {
-        const p = f.properties || {};
-        const [lon, la] = f.geometry.coordinates;
-        results.push({ name: p.name || p.city || q, subtitle: [p.street, p.district, p.city].filter(Boolean).join(', ') || 'Bangladesh', lat: la, lng: lon });
-      });
+      (ph.data?.features || []).forEach((f) => { const p = f.properties || {}; const [lon, la] = f.geometry.coordinates; results.push({ name: p.name || p.city || q, subtitle: [p.street, p.district, p.city].filter(Boolean).join(', ') || 'Bangladesh', lat: la, lng: lon }); });
     } catch {}
   }
-
   const seen = new Set();
-  const unique = results.filter((r) => {
-    const k = `${r.name}_${r.lat.toFixed(2)}`;
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
-  }).slice(0, 8);
-
-  res.json({ places: unique });
+  res.json({ places: results.filter((r) => { const k = `${r.name}_${r.lat.toFixed(2)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 8) });
 });
 
-// ১. AUTH, COUNTRY PHONE & FORGOT PASSWORD VIA EMAIL
 app.post('/api/auth/register', async (req, res) => {
-  const { name, phone, email, password, role, vehicle_type, vehicle_model, plate_number, license_number } = req.body;
+  const { name, phone, email, password, role, vehicle_type, vehicle_model, plate_number, license_number, referral_phone } = req.body;
   const userRole = role || 'RIDER';
   const vKey = userRole === 'DRIVER' ? (vehicle_type || 'BIKE').toUpperCase() : '';
   const cleanPhone = String(phone || '').replace(/[\s-]/g, '');
@@ -223,31 +261,40 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     await client.query('BEGIN');
     const hash = await bcrypt.hash(password, 10);
+    const cfg = await getSettingsMap();
+
+    let refById = null;
+    if (userRole === 'DRIVER' && referral_phone) {
+      const cands = normalizePhoneCandidates(referral_phone);
+      const refRes = await client.query("SELECT id FROM users WHERE phone = ANY($1) AND role = 'DRIVER' LIMIT 1", [cands]);
+      if (refRes.rows.length) refById = refRes.rows[0].id;
+    }
+
+    const daysLimit = Number(cfg.referral_days_limit || 30);
     const userRes = await client.query(
-      `INSERT INTO users (name, phone, email, password_hash, role, vehicle_key)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, name, phone, email, gender, role, vehicle_key, is_active, avatar_url, bkash_number, nagad_number, bkash_linked, nagad_linked, card_linked, card_last4`,
-      [name, cleanPhone, email ? email.trim().toLowerCase() : null, hash, userRole, vKey]
+      `INSERT INTO users (name, phone, email, password_hash, role, vehicle_key, referred_by_id, referral_target_trips, referral_bonus_amount, referral_deadline)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW() + ($10 || ' days')::INTERVAL)
+       RETURNING id, name, phone, email, gender, role, vehicle_key, is_active, avatar_url, bkash_number, nagad_number, bkash_linked, nagad_linked, card_linked, card_last4, referred_by_id`,
+      [name, cleanPhone, email ? email.trim().toLowerCase() : null, hash, userRole, vKey, refById, Number(cfg.referral_target_trips || 15), Number(cfg.referral_bonus_amount || 500), String(daysLimit)]
     );
     const user = userRes.rows[0];
     await client.query('INSERT INTO wallets (user_id) VALUES ($1)', [user.id]);
 
     let driverProfile = null;
     if (userRole === 'DRIVER') {
+      const allowGo = vKey === 'CAR';
+      const allowXl = vKey === 'XL';
       const dpRes = await client.query(
-        `INSERT INTO driver_profiles (user_id, vehicle_type, vehicle_model, plate_number, license_number, is_approved, verification_status, allow_premium)
-         VALUES ($1, $2, $3, $4, $5, FALSE, 'PENDING', FALSE) RETURNING *`,
-        [user.id, vKey, vehicle_model || '', plate_number || '', license_number || '']
+        `INSERT INTO driver_profiles (user_id, vehicle_type, vehicle_model, plate_number, license_number, is_approved, verification_status, allow_go, allow_premium, allow_xl)
+         VALUES ($1, $2, $3, $4, $5, FALSE, 'PENDING', $6, FALSE, $7) RETURNING *`,
+        [user.id, vKey, vehicle_model || '', plate_number || '', license_number || '', allowGo, allowXl]
       );
       driverProfile = dpRes.rows[0];
     }
     await client.query('COMMIT');
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
     res.json({ user: { ...user, driverProfile }, token });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(400).json({ error: err.message });
-  } finally { client.release(); }
+  } catch (err) { await client.query('ROLLBACK'); res.status(400).json({ error: err.message }); } finally { client.release(); }
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -258,37 +305,23 @@ app.post('/api/auth/login', async (req, res) => {
     const params = [candidates];
     if (role) { q += ' AND role = $2'; params.push(role); }
     if (role === 'DRIVER' && vehicle_type) { q += ' AND vehicle_key = $3'; params.push(vehicle_type.toUpperCase()); }
-
     const result = await pool.query(q, params);
     if (!result.rows.length) return res.status(401).json({ error: 'Account not found' });
 
     if (role === 'DRIVER' && !vehicle_type && result.rows.length > 1) {
       const validRows = [];
-      for (const r of result.rows) {
-        if (await bcrypt.compare(password, r.password_hash)) validRows.push(r.vehicle_key);
-      }
+      for (const r of result.rows) if (await bcrypt.compare(password, r.password_hash)) validRows.push(r.vehicle_key);
       if (!validRows.length) return res.status(401).json({ error: 'Invalid password' });
       return res.json({ choose_vehicle: true, vehicles: validRows });
     }
 
     const user = result.rows[0];
-    if (!(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Invalid phone or password' });
-    if (!user.is_active) return res.status(403).json({ error: 'Account suspended by Admin' });
-
+    if (!(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!user.is_active) return res.status(403).json({ error: 'Account suspended' });
     let driverProfile = null;
-    if (user.role === 'DRIVER') {
-      driverProfile = (await pool.query('SELECT * FROM driver_profiles WHERE user_id = $1', [user.id])).rows[0] || null;
-    }
+    if (user.role === 'DRIVER') driverProfile = (await pool.query('SELECT * FROM driver_profiles WHERE user_id = $1', [user.id])).rows[0] || null;
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.json({
-      user: {
-        id: user.id, name: user.name, phone: user.phone, email: user.email, gender: user.gender,
-        role: user.role, is_active: user.is_active, avatar_url: user.avatar_url,
-        bkash_number: user.bkash_number, nagad_number: user.nagad_number,
-        bkash_linked: user.bkash_linked, nagad_linked: user.nagad_linked, card_linked: user.card_linked, card_last4: user.card_last4,
-        driverProfile
-      }, token
-    });
+    res.json({ user: { id: user.id, name: user.name, phone: user.phone, email: user.email, gender: user.gender, role: user.role, is_active: user.is_active, avatar_url: user.avatar_url, bkash_number: user.bkash_number, nagad_number: user.nagad_number, bkash_linked: user.bkash_linked, nagad_linked: user.nagad_linked, card_linked: user.card_linked, card_last4: user.card_last4, driverProfile }, token });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -298,50 +331,27 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const uRes = await pool.query('SELECT id, name FROM users WHERE LOWER(email) = $1 AND role = $2', [email, role]);
     if (!uRes.rows.length) return res.status(404).json({ error: 'No account found with this email' });
-
     const code = String(Math.floor(100000 + Math.random() * 900000));
     await pool.query("INSERT INTO password_resets (email, role, code, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')", [email, role, code]);
-
     let emailSent = false;
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-      });
-      await transporter.sendMail({
-        from: `"Zoddir Support" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: 'Zoddir Password Reset Code',
-        html: `<div style="font-family:sans-serif;padding:20px;background:#0F172A;color:#fff;border-radius:12px;">
-          <h2 style="color:#00D2B8;">Zoddir Password Reset</h2>
-          <p>Hi ${uRes.rows[0].name}, your 6-digit verification code is:</p>
-          <h1 style="color:#A3E635;letter-spacing:4px;">${code}</h1>
-          <p>Valid for 15 minutes.</p>
-        </div>`
-      });
+      const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
+      await transporter.sendMail({ from: `"Zoddir" <${process.env.EMAIL_USER}>`, to: email, subject: 'Zoddir Password Reset Code', html: `<h2>Zoddir Code: ${code}</h2>` });
       emailSent = true;
     }
-
-    res.json({
-      sent: true,
-      email_sent: emailSent,
-      message: emailSent ? 'Verification code sent to your email!' : 'SMTP not configured yet — use test code shown below',
-      test_code: emailSent ? undefined : code
-    });
+    res.json({ sent: true, email_sent: emailSent, message: emailSent ? 'Code sent to your email!' : 'Use test code shown', test_code: emailSent ? undefined : code });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/auth/reset-password', async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const role = req.body.role || 'RIDER';
-  const { code, new_password } = req.body;
   try {
-    const r = await pool.query('SELECT * FROM password_resets WHERE email = $1 AND role = $2 AND code = $3 AND expires_at > NOW() ORDER BY id DESC LIMIT 1', [email, role, String(code)]);
+    const r = await pool.query('SELECT * FROM password_resets WHERE email = $1 AND role = $2 AND code = $3 AND expires_at > NOW() ORDER BY id DESC LIMIT 1', [email, role, String(req.body.code)]);
     if (!r.rows.length) return res.status(400).json({ error: 'Invalid or expired code' });
-    const hash = await bcrypt.hash(new_password, 10);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = $2 AND role = $3', [hash, email, role]);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = $2 AND role = $3', [await bcrypt.hash(req.body.new_password, 10), email, role]);
     await pool.query('DELETE FROM password_resets WHERE email = $1 AND role = $2', [email, role]);
-    res.json({ success: true, message: 'Password reset successful!' });
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -349,9 +359,7 @@ app.put('/api/auth/profile', auth(['RIDER', 'DRIVER', 'ADMIN']), async (req, res
   const { name, phone, email, gender, avatar_url, bkash_number, nagad_number } = req.body;
   try {
     const result = await pool.query(
-      `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), email = COALESCE($3, email),
-       gender = COALESCE($4, gender), avatar_url = COALESCE($5, avatar_url),
-       bkash_number = COALESCE($6, bkash_number), nagad_number = COALESCE($7, nagad_number)
+      `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), email = COALESCE($3, email), gender = COALESCE($4, gender), avatar_url = COALESCE($5, avatar_url), bkash_number = COALESCE($6, bkash_number), nagad_number = COALESCE($7, nagad_number)
        WHERE id = $8 RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number, bkash_linked, nagad_linked, card_linked, card_last4`,
       [name || null, phone || null, email ?? null, gender ?? null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
     );
@@ -365,9 +373,7 @@ app.post('/api/rider/link-payment', auth(['RIDER']), async (req, res) => {
     if (method === 'BKASH') await pool.query('UPDATE users SET bkash_number = $1, bkash_linked = TRUE WHERE id = $2', [account_number, req.user.id]);
     else if (method === 'NAGAD') await pool.query('UPDATE users SET nagad_number = $1, nagad_linked = TRUE WHERE id = $2', [account_number, req.user.id]);
     else if (method === 'CARD') await pool.query('UPDATE users SET card_last4 = $1, card_linked = TRUE WHERE id = $2', [card_last4, req.user.id]);
-    else return res.status(400).json({ error: 'Invalid method' });
-    const uRes = await pool.query('SELECT id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number, bkash_linked, nagad_linked, card_linked, card_last4 FROM users WHERE id = $1', [req.user.id]);
-    res.json({ user: uRes.rows[0] });
+    res.json({ user: (await pool.query('SELECT id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number, bkash_linked, nagad_linked, card_linked, card_last4 FROM users WHERE id = $1', [req.user.id])).rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -381,7 +387,6 @@ app.post('/api/auth/change-password', auth(['RIDER', 'DRIVER', 'ADMIN']), async 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ২. NEARBY ONLINE DRIVERS
 app.get('/api/drivers/nearby', async (req, res) => {
   const { lat, lng, vehicle_type } = req.query;
   if (!lat || !lng) return res.json({ drivers: [] });
@@ -398,44 +403,43 @@ app.get('/api/drivers/nearby', async (req, res) => {
   } catch { res.json({ drivers: [] }); }
 });
 
-// ৩. DRIVER PROFILE & DOCS
 app.get('/api/driver/profile', auth(['DRIVER']), async (req, res) => {
-  const u = await pool.query('SELECT id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number FROM users WHERE id = $1', [req.user.id]);
+  const u = await pool.query('SELECT id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number, referred_by_id, referral_target_trips, referral_bonus_amount, referral_deadline, referral_bonus_paid FROM users WHERE id = $1', [req.user.id]);
   const dp = await pool.query('SELECT * FROM driver_profiles WHERE user_id = $1', [req.user.id]);
   res.json({ user: { ...u.rows[0], driverProfile: dp.rows[0] || null } });
 });
 
+app.get('/api/driver/referral-status', auth(['DRIVER']), async (req, res) => {
+  const cfg = await getSettingsMap();
+  const referred = await pool.query(`SELECT u.id, u.name, u.phone, u.referral_bonus_paid, u.referral_target_trips, u.referral_bonus_amount, (SELECT COUNT(*) FROM rides WHERE driver_id = u.id AND status = 'COMPLETED') AS completed_trips FROM users u WHERE u.referred_by_id = $1 ORDER BY u.id DESC`, [req.user.id]);
+  const myCompleted = Number((await pool.query("SELECT COUNT(*) FROM rides WHERE driver_id = $1 AND status = 'COMPLETED'", [req.user.id])).rows[0].count);
+  res.json({
+    program: { bonus: Number(cfg.referral_bonus_amount || 500), target_trips: Number(cfg.referral_target_trips || 15), days_limit: Number(cfg.referral_days_limit || 30) },
+    my_completed_trips: myCompleted,
+    referred_drivers: referred.rows
+  });
+});
+
 app.put('/api/driver/profile', auth(['DRIVER']), async (req, res) => {
-  const { name, phone, avatar_url, bkash_number, nagad_number, vehicle_type, vehicle_model, plate_number, license_number, nid_photo, license_photo, vehicle_paper_photo, docs_json } = req.body;
+  const { name, phone, avatar_url, bkash_number, nagad_number, vehicle_type, vehicle_model, plate_number, license_number, docs_json } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const uRes = await client.query(
-      `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_url = COALESCE($3, avatar_url),
-       bkash_number = COALESCE($4, bkash_number), nagad_number = COALESCE($5, nagad_number) WHERE id = $6
-       RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number`,
-      [name || null, phone || null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]
-    );
-    const hasNewDocs = !!(nid_photo || license_photo || vehicle_paper_photo || (docs_json && Object.keys(docs_json).length > 0));
+    const uRes = await client.query(`UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_url = COALESCE($3, avatar_url), bkash_number = COALESCE($4, bkash_number), nagad_number = COALESCE($5, nagad_number) WHERE id = $6 RETURNING id, name, phone, email, gender, role, is_active, avatar_url, bkash_number, nagad_number`,
+      [name || null, phone || null, avatar_url || null, bkash_number ?? null, nagad_number ?? null, req.user.id]);
+    const hasNewDocs = !!(docs_json && Object.keys(docs_json).length > 0);
     const dpRes = await client.query(
-      `UPDATE driver_profiles SET vehicle_type = COALESCE($1, vehicle_type), vehicle_model = COALESCE($2, vehicle_model),
-       plate_number = COALESCE($3, plate_number), license_number = COALESCE($4, license_number),
-       nid_photo = COALESCE($5, nid_photo), license_photo = COALESCE($6, license_photo), vehicle_paper_photo = COALESCE($7, vehicle_paper_photo),
-       docs_json = COALESCE(docs_json, '{}'::jsonb) || COALESCE($8::jsonb, '{}'::jsonb),
-       verification_status = CASE WHEN $9 THEN 'PENDING' ELSE verification_status END,
-       is_approved = CASE WHEN $9 THEN FALSE ELSE is_approved END,
-       rejection_reason = CASE WHEN $9 THEN NULL ELSE rejection_reason END
-       WHERE user_id = $10 RETURNING *`,
-      [vehicle_type || null, vehicle_model ?? null, plate_number ?? null, license_number ?? null,
-       nid_photo || null, license_photo || null, vehicle_paper_photo || null,
-       docs_json ? JSON.stringify(docs_json) : null, hasNewDocs, req.user.id]
+      `UPDATE driver_profiles SET vehicle_type = COALESCE($1, vehicle_type), vehicle_model = COALESCE($2, vehicle_model), plate_number = COALESCE($3, plate_number), license_number = COALESCE($4, license_number),
+       docs_json = COALESCE(docs_json, '{}'::jsonb) || COALESCE($5::jsonb, '{}'::jsonb),
+       verification_status = CASE WHEN $6 THEN 'PENDING' ELSE verification_status END, is_approved = CASE WHEN $6 THEN FALSE ELSE is_approved END
+       WHERE user_id = $7 RETURNING *`,
+      [vehicle_type || null, vehicle_model ?? null, plate_number ?? null, license_number ?? null, docs_json ? JSON.stringify(docs_json) : null, hasNewDocs, req.user.id]
     );
     await client.query('COMMIT');
     res.json({ user: { ...uRes.rows[0], driverProfile: dpRes.rows[0] } });
   } catch (err) { await client.query('ROLLBACK'); res.status(400).json({ error: err.message }); } finally { client.release(); }
 });
 
-// ৪. OSRM ESTIMATE
 app.post('/api/rides/estimate', async (req, res) => {
   const { pickup_lat, pickup_lng, drop_lat, drop_lng, promo_code, ride_type, rental_hours } = req.body;
   try {
@@ -454,6 +458,7 @@ app.post('/api/rides/estimate', async (req, res) => {
       } catch {}
     }
 
+    const surge = await computeSurgeAt(pickup_lat, pickup_lng);
     const ratesRes = await pool.query('SELECT * FROM vehicle_rates');
     let promo = null;
     if (promo_code) {
@@ -463,18 +468,18 @@ app.post('/api/rides/estimate', async (req, res) => {
 
     const hrs = Number(rental_hours || 1);
     const estimates = ratesRes.rows.map((rate) => {
-      let subtotal = ride_type === 'RENTAL'
+      let baseSub = ride_type === 'RENTAL'
         ? Math.round((Number(rate.base_fare) * 3 + 15 * Number(rate.per_km_rate)) * hrs * 0.85)
         : Math.max(Number(rate.min_fare), Math.round(Number(rate.base_fare) + distanceKm * Number(rate.per_km_rate) + durationMin * Number(rate.per_min_rate)));
+      const subtotal = Math.round(baseSub * surge.multiplier);
       let discount = 0;
       if (promo) discount = promo.discount_type === 'FIXED' ? Number(promo.discount_value) : Math.min(Number(promo.max_discount), Math.round((subtotal * Number(promo.discount_value)) / 100));
       return { vehicle_type: rate.vehicle_type, original_fare: subtotal, discount, estimated_fare: Math.max(0, subtotal - discount) };
     });
-    res.json({ distance_km: distanceKm, duration_min: durationMin, route_coords: routeCoords, promo_valid: !!promo, estimates });
+    res.json({ distance_km: distanceKm, duration_min: durationMin, route_coords: routeCoords, promo_valid: !!promo, surge_multiplier: surge.multiplier, surge_label: surge.label, estimates });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ৫. RIDE REQUEST (4-DIGIT PIN + ADMIN PAYMENT METHOD ENFORCEMENT + WATERFALL)
 async function broadcastRideToNextDrivers(ride) {
   const cfg = await getSettingsMap();
   const radius = Number(cfg.dispatch_radius_km || 5);
@@ -490,15 +495,12 @@ app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
   try {
     const pm = (payment_method || 'CASH').toUpperCase();
     const cfg = await getSettingsMap();
-    if (pm === 'BKASH' && cfg.enable_bkash !== 'true') return res.status(400).json({ error: 'bKash is currently disabled by Admin' });
-    if (pm === 'NAGAD' && cfg.enable_nagad !== 'true') return res.status(400).json({ error: 'Nagad is currently disabled by Admin' });
-    if (pm === 'CARD' && cfg.enable_card !== 'true') return res.status(400).json({ error: 'Card payment is currently disabled by Admin' });
-
+    if (pm === 'BKASH' && cfg.enable_bkash !== 'true') return res.status(400).json({ error: 'bKash disabled' });
+    if (pm === 'NAGAD' && cfg.enable_nagad !== 'true') return res.status(400).json({ error: 'Nagad disabled' });
+    if (pm === 'CARD' && cfg.enable_card !== 'true') return res.status(400).json({ error: 'Card disabled' });
     if (pm !== 'CASH') {
       const u = (await pool.query('SELECT bkash_linked, nagad_linked, card_linked FROM users WHERE id = $1', [req.user.id])).rows[0];
-      if ((pm === 'BKASH' && !u.bkash_linked) || (pm === 'NAGAD' && !u.nagad_linked) || (pm === 'CARD' && !u.card_linked)) {
-        return res.status(400).json({ error: `Please link your ${pm} account in Wallet first` });
-      }
+      if ((pm === 'BKASH' && !u.bkash_linked) || (pm === 'NAGAD' && !u.nagad_linked) || (pm === 'CARD' && !u.card_linked)) return res.status(400).json({ error: `Link ${pm} in Wallet first` });
     }
 
     let validPromo = null;
@@ -507,11 +509,12 @@ app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
       if (pRes.rows.length > 0) validPromo = pRes.rows[0].code;
     }
 
+    const surge = await computeSurgeAt(pickup_lat, pickup_lng);
     const ridePin = String(Math.floor(1000 + Math.random() * 9000));
     const rideRes = await pool.query(
-      `INSERT INTO rides (rider_id, vehicle_type, pickup_lat, pickup_lng, pickup_address, drop_lat, drop_lng, drop_address, estimated_fare, payment_method, promo_code, ride_type, meta_json, ride_pin)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [req.user.id, vehicle_type, pickup_lat, pickup_lng, pickup_address || 'Pickup', drop_lat || pickup_lat, drop_lng || pickup_lng, drop_address || 'Destination', estimated_fare || 0, pm, validPromo, ride_type || 'RIDE', JSON.stringify(meta_json || {}), ridePin]
+      `INSERT INTO rides (rider_id, vehicle_type, pickup_lat, pickup_lng, pickup_address, drop_lat, drop_lng, drop_address, estimated_fare, payment_method, promo_code, ride_type, meta_json, ride_pin, surge_multiplier, surge_label)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [req.user.id, vehicle_type, pickup_lat, pickup_lng, pickup_address || 'Pickup', drop_lat || pickup_lat, drop_lng || pickup_lng, drop_address || 'Destination', estimated_fare || 0, pm, validPromo, ride_type || 'RIDE', JSON.stringify(meta_json || {}), ridePin, surge.multiplier, surge.label]
     );
     const ride = rideRes.rows[0];
     const notified = await broadcastRideToNextDrivers(ride);
@@ -520,36 +523,38 @@ app.post('/api/rides/request', auth(['RIDER']), async (req, res) => {
 });
 
 app.post('/api/rides/:id/retry', auth(['RIDER']), async (req, res) => {
-  try {
-    await redis.del(`ride:declined:${req.params.id}`);
-    const rRes = await pool.query("UPDATE rides SET status = 'SEARCHING', created_at = NOW() WHERE id = $1 AND rider_id = $2 RETURNING *", [req.params.id, req.user.id]);
-    if (!rRes.rows.length) return res.status(404).json({ error: 'Not found' });
-    const notified = await broadcastRideToNextDrivers(rRes.rows[0]);
-    res.json({ ride: rRes.rows[0], notified_drivers: notified });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  await redis.del(`ride:declined:${req.params.id}`);
+  const rRes = await pool.query("UPDATE rides SET status = 'SEARCHING', created_at = NOW() WHERE id = $1 AND rider_id = $2 RETURNING *", [req.params.id, req.user.id]);
+  if (!rRes.rows.length) return res.status(404).json({ error: 'Not found' });
+  const notified = await broadcastRideToNextDrivers(rRes.rows[0]);
+  res.json({ ride: rRes.rows[0], notified_drivers: notified });
 });
 
 app.post('/api/rides/:id/decline', auth(['DRIVER']), async (req, res) => {
-  try {
-    await redis.sadd(`ride:declined:${req.params.id}`, req.user.id.toString());
-    await redis.expire(`ride:declined:${req.params.id}`, 3600);
-    const rRes = await pool.query("SELECT * FROM rides WHERE id = $1 AND status = 'SEARCHING'", [req.params.id]);
-    if (rRes.rows.length) await broadcastRideToNextDrivers(rRes.rows[0]);
-    res.json({ declined: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  await redis.sadd(`ride:declined:${req.params.id}`, req.user.id.toString());
+  await redis.expire(`ride:declined:${req.params.id}`, 3600);
+  const rRes = await pool.query("SELECT * FROM rides WHERE id = $1 AND status = 'SEARCHING'", [req.params.id]);
+  if (rRes.rows.length) await broadcastRideToNextDrivers(rRes.rows[0]);
+  res.json({ declined: true });
 });
 
 app.get('/api/rides/available', auth(['DRIVER']), async (req, res) => {
   try {
-    const dp = await pool.query('SELECT vehicle_type, is_approved, is_online, allow_premium FROM driver_profiles WHERE user_id = $1', [req.user.id]);
+    const dp = await pool.query('SELECT vehicle_type, is_approved, is_online, allow_go, allow_premium, allow_xl FROM driver_profiles WHERE user_id = $1', [req.user.id]);
     const prof = dp.rows[0];
     if (!prof || !prof.is_approved || !prof.is_online) return res.json({ rides: [] });
 
-    const allowedTypes = (prof.vehicle_type === 'CAR' && prof.allow_premium) ? ['CAR', 'PREMIUM'] : [prof.vehicle_type];
-    const rides = await pool.query(
-      `SELECT r.*, u.name AS rider_name, u.phone AS rider_phone FROM rides r JOIN users u ON r.rider_id = u.id
-       WHERE r.status = 'SEARCHING' AND r.vehicle_type = ANY($1) ORDER BY r.created_at DESC LIMIT 10`, [allowedTypes]
-    );
+    const allowedTypes = [];
+    if (prof.vehicle_type === 'BIKE') allowedTypes.push('BIKE');
+    if (prof.vehicle_type === 'CNG') allowedTypes.push('CNG');
+    if (prof.vehicle_type === 'CAR' || prof.vehicle_type === 'XL') {
+      if (prof.allow_go) allowedTypes.push('CAR');
+      if (prof.allow_premium) allowedTypes.push('PREMIUM');
+      if (prof.allow_xl || prof.vehicle_type === 'XL') allowedTypes.push('XL');
+    }
+    if (!allowedTypes.length) allowedTypes.push(prof.vehicle_type);
+
+    const rides = await pool.query(`SELECT r.*, u.name AS rider_name, u.phone AS rider_phone FROM rides r JOIN users u ON r.rider_id = u.id WHERE r.status = 'SEARCHING' AND r.vehicle_type = ANY($1) ORDER BY r.created_at DESC LIMIT 10`, [allowedTypes]);
     const cfg = await getSettingsMap();
     const maxRadius = Number(cfg.dispatch_radius_km || 5);
     const dLat = Number(req.query.lat || 0), dLng = Number(req.query.lng || 0);
@@ -565,27 +570,21 @@ app.get('/api/rides/available', auth(['DRIVER']), async (req, res) => {
 });
 
 app.get('/api/rides/history', auth(['RIDER', 'DRIVER']), async (req, res) => {
-  try {
-    const col = req.user.role === 'RIDER' ? 'r.rider_id' : 'r.driver_id';
-    const result = await pool.query(`SELECT r.*, du.name AS driver_name, dp.plate_number FROM rides r LEFT JOIN users du ON r.driver_id = du.id LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id WHERE ${col} = $1 AND r.status IN ('COMPLETED','CANCELLED') ORDER BY r.created_at DESC LIMIT 30`, [req.user.id]);
-    res.json({ rides: result.rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  const col = req.user.role === 'RIDER' ? 'r.rider_id' : 'r.driver_id';
+  res.json({ rides: (await pool.query(`SELECT r.*, du.name AS driver_name, dp.plate_number FROM rides r LEFT JOIN users du ON r.driver_id = du.id LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id WHERE ${col} = $1 AND r.status IN ('COMPLETED','CANCELLED') ORDER BY r.created_at DESC LIMIT 30`, [req.user.id])).rows });
 });
 
 app.get('/api/rides/my-active', auth(['RIDER', 'DRIVER']), async (req, res) => {
-  try {
-    const col = req.user.role === 'RIDER' ? 'r.rider_id' : 'r.driver_id';
-    const result = await pool.query(
-      `SELECT r.*, ru.name AS rider_name, ru.phone AS rider_phone,
-        du.name AS driver_name, du.phone AS driver_phone, du.avatar_url AS driver_avatar,
-        dp.plate_number, dp.vehicle_model, dp.rating AS driver_rating,
-        (SELECT COUNT(*) FROM rides WHERE driver_id = r.driver_id AND status = 'COMPLETED') AS driver_trips
-       FROM rides r LEFT JOIN users ru ON r.rider_id = ru.id LEFT JOIN users du ON r.driver_id = du.id
-       LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id
-       WHERE ${col} = $1 AND r.status IN ('SEARCHING','ACCEPTED','ARRIVED','STARTED') ORDER BY r.created_at DESC LIMIT 1`, [req.user.id]
-    );
-    res.json({ ride: result.rows[0] || null });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  const col = req.user.role === 'RIDER' ? 'r.rider_id' : 'r.driver_id';
+  const result = await pool.query(
+    `SELECT r.*, ru.name AS rider_name, ru.phone AS rider_phone,
+      du.name AS driver_name, du.phone AS driver_phone, du.avatar_url AS driver_avatar,
+      dp.plate_number, dp.vehicle_model, dp.rating AS driver_rating,
+      (SELECT COUNT(*) FROM rides WHERE driver_id = r.driver_id AND status = 'COMPLETED') AS driver_trips
+     FROM rides r LEFT JOIN users ru ON r.rider_id = ru.id LEFT JOIN users du ON r.driver_id = du.id LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id
+     WHERE ${col} = $1 AND r.status IN ('SEARCHING','ACCEPTED','ARRIVED','STARTED') ORDER BY r.created_at DESC LIMIT 1`, [req.user.id]
+  );
+  res.json({ ride: result.rows[0] || null });
 });
 
 app.post('/api/rides/:id/accept', auth(['DRIVER']), async (req, res) => {
@@ -595,28 +594,23 @@ app.post('/api/rides/:id/accept', auth(['DRIVER']), async (req, res) => {
     const result = await pool.query("UPDATE rides SET driver_id = $1, status = 'ACCEPTED' WHERE id = $2 AND status = 'SEARCHING' RETURNING *", [req.user.id, req.params.id]);
     if (!result.rows.length) return res.status(400).json({ error: 'Ride already taken' });
     const ride = result.rows[0];
-    const fullRide = await pool.query(
+    const fullRide = (await pool.query(
       `SELECT r.*, du.name AS driver_name, du.phone AS driver_phone, du.avatar_url AS driver_avatar,
        dp.plate_number, dp.vehicle_model, dp.rating AS driver_rating,
        (SELECT COUNT(*) FROM rides WHERE driver_id = r.driver_id AND status = 'COMPLETED') AS driver_trips,
        ru.name AS rider_name, ru.phone AS rider_phone FROM rides r
-       LEFT JOIN users du ON r.driver_id = du.id LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id
-       LEFT JOIN users ru ON r.rider_id = ru.id WHERE r.id = $1`, [ride.id]
-    );
-    io.to(`rider_${ride.rider_id}`).emit('ride_accepted', fullRide.rows[0]);
-    res.json({ ride: fullRide.rows[0] });
+       LEFT JOIN users du ON r.driver_id = du.id LEFT JOIN driver_profiles dp ON r.driver_id = dp.user_id LEFT JOIN users ru ON r.rider_id = ru.id WHERE r.id = $1`, [ride.id]
+    )).rows[0];
+    io.to(`rider_${ride.rider_id}`).emit('ride_accepted', fullRide);
+    res.json({ ride: fullRide });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ট্রিপ শুরু করতে ৪ সংখ্যার PIN যাচাই
 app.post('/api/rides/:id/start', auth(['DRIVER']), async (req, res) => {
-  const { pin } = req.body || {};
   try {
     const chk = await pool.query("SELECT ride_pin, status FROM rides WHERE id = $1 AND driver_id = $2", [req.params.id, req.user.id]);
-    if (!chk.rows.length || chk.rows[0].status !== 'ACCEPTED') return res.status(400).json({ error: 'Cannot start ride' });
-    if (chk.rows[0].ride_pin && String(pin || '').trim() !== String(chk.rows[0].ride_pin)) {
-      return res.status(400).json({ error: 'Invalid 4-digit PIN! Ask rider for the Trip PIN.' });
-    }
+    if (!chk.rows.length || chk.rows[0].status !== 'ACCEPTED') return res.status(400).json({ error: 'Cannot start' });
+    if (chk.rows[0].ride_pin && String(req.body?.pin || '').trim() !== String(chk.rows[0].ride_pin)) return res.status(400).json({ error: 'Invalid 4-digit PIN!' });
     const result = await pool.query("UPDATE rides SET status = 'STARTED', started_at = NOW() WHERE id = $1 AND driver_id = $2 RETURNING *", [req.params.id, req.user.id]);
     await redis.del(`ride:gps:${req.params.id}`);
     io.to(`rider_${result.rows[0].rider_id}`).emit('ride_started', result.rows[0]);
@@ -625,41 +619,37 @@ app.post('/api/rides/:id/start', auth(['DRIVER']), async (req, res) => {
 });
 
 app.post('/api/rides/:id/cancel', auth(['RIDER', 'DRIVER']), async (req, res) => {
-  try {
-    const result = await pool.query("UPDATE rides SET status = 'CANCELLED', cancel_reason = $1 WHERE id = $2 AND status IN ('SEARCHING','ACCEPTED') RETURNING *", [req.body?.reason || null, req.params.id]);
-    if (!result.rows.length) return res.status(400).json({ error: 'Cannot cancel' });
-    const ride = result.rows[0];
-    if (ride.driver_id) io.to(`driver_${ride.driver_id}`).emit('ride_cancelled', ride);
-    io.to(`rider_${ride.rider_id}`).emit('ride_cancelled', ride);
-    res.json({ ride });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  const result = await pool.query("UPDATE rides SET status = 'CANCELLED', cancel_reason = $1 WHERE id = $2 AND status IN ('SEARCHING','ACCEPTED') RETURNING *", [req.body?.reason || null, req.params.id]);
+  if (!result.rows.length) return res.status(400).json({ error: 'Cannot cancel' });
+  const ride = result.rows[0];
+  if (ride.driver_id) io.to(`driver_${ride.driver_id}`).emit('ride_cancelled', ride);
+  io.to(`rider_${ride.rider_id}`).emit('ride_cancelled', ride);
+  res.json({ ride });
 });
 
 app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const rideRes = await client.query('SELECT * FROM rides WHERE id = $1 AND driver_id = $2 FOR UPDATE', [req.params.id, req.user.id]);
-    const ride = rideRes.rows[0];
+    const ride = (await client.query('SELECT * FROM rides WHERE id = $1 AND driver_id = $2 FOR UPDATE', [req.params.id, req.user.id])).rows[0];
     if (!ride || ride.status !== 'STARTED') throw new Error('Ride not active');
 
     const rawLogs = await redis.lrange(`ride:gps:${ride.id}`, 0, -1);
-    const gpsPoints = rawLogs.map((item) => JSON.parse(item));
-    let actualKm = calculateActualDistanceKm(gpsPoints);
+    let actualKm = calculateActualDistanceKm(rawLogs.map((item) => JSON.parse(item)));
     if (actualKm === 0) actualKm = Number((haversineKm(ride.pickup_lat, ride.pickup_lng, ride.drop_lat, ride.drop_lng) * 1.15).toFixed(2));
     const durationMin = Math.max(1, (Date.now() - new Date(ride.started_at).getTime()) / 60000);
 
-    const rateRes = await client.query('SELECT * FROM vehicle_rates WHERE vehicle_type = $1', [ride.vehicle_type]);
-    const rate = rateRes.rows[0];
+    const rate = (await client.query('SELECT * FROM vehicle_rates WHERE vehicle_type = $1', [ride.vehicle_type])).rows[0];
+    const mult = Number(ride.surge_multiplier || 1);
     let subtotal = Number(ride.estimated_fare || 0);
     if (ride.ride_type !== 'RENTAL' || subtotal === 0) {
-      subtotal = Math.max(Number(rate.min_fare), Math.round(Number(rate.base_fare) + actualKm * Number(rate.per_km_rate) + durationMin * Number(rate.per_min_rate)));
+      const baseCalc = Math.max(Number(rate.min_fare), Math.round(Number(rate.base_fare) + actualKm * Number(rate.per_km_rate) + durationMin * Number(rate.per_min_rate)));
+      subtotal = Math.round(baseCalc * mult);
     }
 
     let promoDiscount = 0;
     if (ride.promo_code) {
-      const pRes = await client.query('SELECT * FROM rider_promos WHERE code = $1', [ride.promo_code]);
-      const promo = pRes.rows[0];
+      const promo = (await client.query('SELECT * FROM rider_promos WHERE code = $1', [ride.promo_code])).rows[0];
       if (promo) {
         promoDiscount = promo.discount_type === 'FIXED' ? Number(promo.discount_value) : Math.min(Number(promo.max_discount), Math.round((subtotal * Number(promo.discount_value)) / 100));
         await client.query('UPDATE rider_promos SET used_count = used_count + 1 WHERE id = $1', [promo.id]);
@@ -670,14 +660,12 @@ app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
     const commission = Number(((subtotal * Number(rate.commission_percent)) / 100).toFixed(2));
     const driverEarning = Number((subtotal - commission).toFixed(2));
 
-    const walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [ride.driver_id]);
-    let currentBal = Number(walletRes.rows[0].balance);
-
+    let currentBal = Number((await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [ride.driver_id])).rows[0].balance);
     if (ride.payment_method === 'CASH') {
-      const netWalletChange = Number((promoDiscount - commission).toFixed(2));
-      currentBal = Number((currentBal + netWalletChange).toFixed(2));
+      const net = Number((promoDiscount - commission).toFixed(2));
+      currentBal = Number((currentBal + net).toFixed(2));
       await client.query('UPDATE wallets SET balance = $1, total_earned = total_earned + $2 WHERE user_id = $3', [currentBal, driverEarning, ride.driver_id]);
-      await client.query('INSERT INTO wallet_transactions (user_id, ride_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5,$6)', [ride.driver_id, ride.id, 'COMMISSION_DEDUCT', netWalletChange, currentBal, `Cash ride #${ride.id} commission`]);
+      await client.query('INSERT INTO wallet_transactions (user_id, ride_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5,$6)', [ride.driver_id, ride.id, 'COMMISSION_DEDUCT', net, currentBal, `Cash ride #${ride.id} commission`]);
     } else {
       currentBal = Number((currentBal + driverEarning).toFixed(2));
       await client.query('UPDATE wallets SET balance = $1, total_earned = total_earned + $2 WHERE user_id = $3', [currentBal, driverEarning, ride.driver_id]);
@@ -686,53 +674,86 @@ app.post('/api/rides/:id/complete', auth(['DRIVER']), async (req, res) => {
 
     const activeQuests = await client.query('SELECT * FROM driver_quests WHERE is_active = TRUE AND start_time <= NOW() AND end_time >= NOW()');
     for (const quest of activeQuests.rows) {
-      const progRes = await client.query(`INSERT INTO driver_quest_progress (driver_id, quest_id, completed_trips) VALUES ($1, $2, 1) ON CONFLICT (driver_id, quest_id) DO UPDATE SET completed_trips = driver_quest_progress.completed_trips + 1 RETURNING *`, [ride.driver_id, quest.id]);
-      const prog = progRes.rows[0];
+      const prog = (await client.query(`INSERT INTO driver_quest_progress (driver_id, quest_id, completed_trips) VALUES ($1, $2, 1) ON CONFLICT (driver_id, quest_id) DO UPDATE SET completed_trips = driver_quest_progress.completed_trips + 1 RETURNING *`, [ride.driver_id, quest.id])).rows[0];
       if (prog.completed_trips >= quest.target_trips && !prog.is_claimed) {
         const bonus = Number(quest.bonus_amount);
         currentBal = Number((currentBal + bonus).toFixed(2));
         await client.query('UPDATE wallets SET balance = $1, total_earned = total_earned + $2 WHERE user_id = $3', [currentBal, bonus, ride.driver_id]);
         await client.query('UPDATE driver_quest_progress SET is_claimed = TRUE WHERE driver_id = $1 AND quest_id = $2', [ride.driver_id, quest.id]);
-        await client.query('INSERT INTO wallet_transactions (user_id, ride_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5,$6)', [ride.driver_id, ride.id, 'QUEST_BONUS', bonus, currentBal, `Quest Bonus: ${quest.title}`]);
+        await client.query('INSERT INTO wallet_transactions (user_id, ride_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5,$6)', [ride.driver_id, ride.id, 'QUEST_BONUS', bonus, currentBal, `Quest: ${quest.title}`]);
       }
     }
 
-    const updatedRideRes = await client.query(
-      `UPDATE rides SET status = 'COMPLETED', actual_distance_km = $1, actual_duration_min = $2, promo_discount = $3,
-       final_fare = $4, platform_commission = $5, driver_earning = $6, completed_at = NOW(), payment_status = 'PAID' WHERE id = $7 RETURNING *`,
+    const dUser = (await client.query('SELECT referred_by_id, referral_bonus_paid, referral_target_trips, referral_bonus_amount, referral_deadline FROM users WHERE id = $1', [ride.driver_id])).rows[0];
+    if (dUser?.referred_by_id && !dUser.referral_bonus_paid && (!dUser.referral_deadline || new Date() <= new Date(dUser.referral_deadline))) {
+      const doneTrips = Number((await client.query("SELECT COUNT(*) FROM rides WHERE driver_id = $1 AND status = 'COMPLETED'", [ride.driver_id])).rows[0].count) + 1;
+      if (doneTrips >= Number(dUser.referral_target_trips || 15)) {
+        const refBonus = Number(dUser.referral_bonus_amount || 500);
+        const rBal = Number((await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [dUser.referred_by_id])).rows[0].balance) + refBonus;
+        await client.query('UPDATE wallets SET balance = $1, total_earned = total_earned + $2 WHERE user_id = $3', [rBal, refBonus, dUser.referred_by_id]);
+        await client.query('UPDATE users SET referral_bonus_paid = TRUE WHERE id = $1', [ride.driver_id]);
+        await client.query('INSERT INTO wallet_transactions (user_id, type, amount, balance_after, description) VALUES ($1,$2,$3,$4,$5)', [dUser.referred_by_id, 'REFERRAL_BONUS', refBonus, rBal, `Referral Bonus (Driver #${ride.driver_id} completed ${doneTrips} trips)`]);
+      }
+    }
+
+    const updatedRide = (await client.query(
+      `UPDATE rides SET status = 'COMPLETED', actual_distance_km = $1, actual_duration_min = $2, promo_discount = $3, final_fare = $4, platform_commission = $5, driver_earning = $6, completed_at = NOW(), payment_status = 'PAID' WHERE id = $7 RETURNING *`,
       [actualKm, Number(durationMin.toFixed(2)), promoDiscount, finalFare, commission, driverEarning, ride.id]
-    );
+    )).rows[0];
+
     await client.query('COMMIT');
     await redis.del(`ride:gps:${ride.id}`);
-    io.to(`rider_${ride.rider_id}`).emit('ride_completed', updatedRideRes.rows[0]);
-    res.json({ ride: updatedRideRes.rows[0], wallet_balance: currentBal });
+    io.to(`rider_${ride.rider_id}`).emit('ride_completed', updatedRide);
+    res.json({ ride: updatedRide, wallet_balance: currentBal });
   } catch (err) { await client.query('ROLLBACK'); res.status(400).json({ error: err.message }); } finally { client.release(); }
 });
 
-// ৬. MONTHLY RENTALS, DRIVER WALLET & ADMIN APIS
+app.post('/api/rides/:id/review', auth(['RIDER']), async (req, res) => {
+  const { rating, tags, comment } = req.body;
+  try {
+    const r = (await pool.query('SELECT driver_id FROM rides WHERE id = $1 AND rider_id = $2', [req.params.id, req.user.id])).rows[0];
+    if (!r || !r.driver_id) return res.status(404).json({ error: 'Ride not found' });
+    await pool.query('INSERT INTO ride_reviews (ride_id, rider_id, driver_id, rating, tags, comment) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (ride_id) DO NOTHING', [req.params.id, req.user.id, r.driver_id, Number(rating), tags || '', comment || '']);
+    const avg = Number((await pool.query('SELECT COALESCE(AVG(rating), 5.0) AS avg_r FROM ride_reviews WHERE driver_id = $1', [r.driver_id])).rows[0].avg_r).toFixed(2);
+    await pool.query('UPDATE driver_profiles SET rating = $1 WHERE user_id = $2', [avg, r.driver_id]);
+    res.json({ success: true, new_rating: avg });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.get('/api/support/my-messages', auth(['RIDER', 'DRIVER']), async (req, res) => {
+  const tk = (await pool.query("SELECT * FROM support_tickets WHERE user_id = $1 AND status = 'OPEN' ORDER BY id DESC LIMIT 1", [req.user.id])).rows[0];
+  if (!tk) return res.json({ ticket: null, messages: [] });
+  const msgs = (await pool.query("SELECT * FROM support_messages WHERE ticket_id = $1 AND created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC", [tk.id])).rows;
+  res.json({ ticket: tk, messages: msgs });
+});
+
+app.post('/api/support/send', auth(['RIDER', 'DRIVER']), async (req, res) => {
+  const { msg_type, content, file_data, file_name } = req.body;
+  let tk = (await pool.query("SELECT * FROM support_tickets WHERE user_id = $1 AND status = 'OPEN' ORDER BY id DESC LIMIT 1", [req.user.id])).rows[0];
+  if (!tk) tk = (await pool.query('INSERT INTO support_tickets (user_id, user_role) VALUES ($1, $2) RETURNING *', [req.user.id, req.user.role])).rows[0];
+  const m = (await pool.query('INSERT INTO support_messages (ticket_id, sender_role, msg_type, content, file_data, file_name) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [tk.id, req.user.role, msg_type || 'TEXT', content || '', file_data || null, file_name || null])).rows[0];
+  await pool.query('UPDATE support_tickets SET updated_at = NOW() WHERE id = $1', [tk.id]);
+  res.json({ ticket: tk, message: m });
+});
+
 app.post('/api/monthly-rentals', auth(['RIDER']), async (req, res) => {
   const { vehicle_type, brand_model, purpose, start_date, start_time, duration_text, fuel_option, offered_budget, phone, email, location, notes } = req.body;
-  try {
-    const r = await pool.query(`INSERT INTO monthly_rentals (user_id, vehicle_type, brand_model, purpose, start_date, start_time, duration_text, fuel_option, offered_budget, phone, email, location, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [req.user.id, vehicle_type, brand_model, purpose, start_date, start_time, duration_text, fuel_option, Number(offered_budget || 0), phone, email, location, notes || '']);
-    res.json({ rental: r.rows[0] });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  res.json({ rental: (await pool.query(`INSERT INTO monthly_rentals (user_id, vehicle_type, brand_model, purpose, start_date, start_time, duration_text, fuel_option, offered_budget, phone, email, location, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`, [req.user.id, vehicle_type, brand_model, purpose, start_date, start_time, duration_text, fuel_option, Number(offered_budget || 0), phone, email, location, notes || ''])).rows[0] });
 });
 
 app.post('/api/driver/status', auth(['DRIVER']), async (req, res) => {
-  const dp = await pool.query('SELECT is_approved, vehicle_type FROM driver_profiles WHERE user_id = $1', [req.user.id]);
-  if (req.body.is_online && !dp.rows[0]?.is_approved) return res.status(403).json({ error: 'Documents not approved yet' });
+  const dp = (await pool.query('SELECT is_approved FROM driver_profiles WHERE user_id = $1', [req.user.id])).rows[0];
+  if (req.body.is_online && !dp?.is_approved) return res.status(403).json({ error: 'Documents not approved yet' });
   await pool.query('UPDATE driver_profiles SET is_online = $1 WHERE user_id = $2', [req.body.is_online, req.user.id]);
   if (!req.body.is_online) {
-    await redis.zrem(`drivers:online:${dp.rows[0]?.vehicle_type || 'BIKE'}`, req.user.id.toString());
-    await redis.zrem('drivers:online:PREMIUM', req.user.id.toString());
+    for (const k of ['BIKE', 'CNG', 'CAR', 'PREMIUM', 'XL']) await redis.zrem(`drivers:online:${k}`, req.user.id.toString());
   }
   res.json({ is_online: req.body.is_online });
 });
 
 app.get('/api/driver/quests', auth(['DRIVER']), async (req, res) => res.json({ quests: (await pool.query(`SELECT q.*, COALESCE(p.completed_trips, 0) AS completed_trips, COALESCE(p.is_claimed, FALSE) AS is_claimed FROM driver_quests q LEFT JOIN driver_quest_progress p ON q.id = p.quest_id AND p.driver_id = $1 WHERE q.is_active = TRUE AND q.end_time >= NOW() ORDER BY q.id DESC`, [req.user.id])).rows }));
 app.get('/api/driver/wallet', auth(['DRIVER']), async (req, res) => res.json({ wallet: (await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.id])).rows[0], transactions: (await pool.query('SELECT * FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20', [req.user.id])).rows, withdraws: (await pool.query('SELECT * FROM withdraw_requests WHERE driver_id = $1 ORDER BY created_at DESC LIMIT 10', [req.user.id])).rows, duePayments: (await pool.query('SELECT * FROM due_payments WHERE driver_id = $1 ORDER BY created_at DESC LIMIT 10', [req.user.id])).rows }));
-app.get('/api/driver/earnings-detail', auth(['DRIVER']), async (req, res) => res.json({ daily: (await pool.query(`SELECT TO_CHAR(completed_at, 'YYYY-MM-DD') AS day, COUNT(*) AS trips, COALESCE(SUM(driver_earning), 0) AS total_earning, COALESCE(SUM(final_fare), 0) AS total_fare FROM rides WHERE driver_id = $1 AND status = 'COMPLETED' AND completed_at >= NOW() - INTERVAL '30 days' GROUP BY day ORDER BY day DESC`, [req.user.id])).rows, trips: (await pool.query(`SELECT id, ride_type, pickup_address, drop_address, actual_distance_km, actual_duration_min, final_fare, platform_commission, driver_earning, payment_method, completed_at FROM rides WHERE driver_id = $1 AND status = 'COMPLETED' ORDER BY completed_at DESC LIMIT 40`, [req.user.id])).rows }));
+app.get('/api/driver/earnings-detail', auth(['DRIVER']), async (req, res) => res.json({ daily: (await pool.query(`SELECT TO_CHAR(completed_at, 'YYYY-MM-DD') AS day, COUNT(*) AS trips, COALESCE(SUM(driver_earning), 0) AS total_earning, COALESCE(SUM(final_fare), 0) AS total_fare FROM rides WHERE driver_id = $1 AND status = 'COMPLETED' AND completed_at >= NOW() - INTERVAL '30 days' GROUP BY day ORDER BY day DESC`, [req.user.id])).rows, trips: (await pool.query(`SELECT id, ride_type, pickup_address, drop_address, actual_distance_km, actual_duration_min, final_fare, platform_commission, driver_earning, payment_method, surge_multiplier, completed_at FROM rides WHERE driver_id = $1 AND status = 'COMPLETED' ORDER BY completed_at DESC LIMIT 40`, [req.user.id])).rows }));
 app.post('/api/driver/pay-due', auth(['DRIVER']), async (req, res) => { const { amount, method, trx_id } = req.body; if (!amount || !trx_id) return res.status(400).json({ error: 'Amount & TrxID required' }); res.json({ due_payment: (await pool.query('INSERT INTO due_payments (driver_id, amount, method, trx_id) VALUES ($1,$2,$3,$4) RETURNING *', [req.user.id, Number(amount), method, trx_id])).rows[0] }); });
 app.post('/api/driver/withdraw', auth(['DRIVER']), async (req, res) => {
   const { amount, method, account_number } = req.body; const client = await pool.connect();
@@ -760,16 +781,55 @@ app.get('/api/admin/overview', auth(['ADMIN']), async (req, res) => {
     monthlyRentals: (await pool.query('SELECT mr.*, u.name AS user_name FROM monthly_rentals mr LEFT JOIN users u ON mr.user_id = u.id ORDER BY mr.created_at DESC')).rows,
     drivers: (await pool.query(`SELECT u.id, u.name, u.phone, u.is_active, u.avatar_url, COALESCE(w.balance,0) AS wallet_balance, dp.* FROM users u JOIN driver_profiles dp ON u.id = dp.user_id LEFT JOIN wallets w ON u.id = w.user_id ORDER BY u.id DESC`)).rows,
     riders: (await pool.query(`SELECT u.id, u.name, u.phone, u.is_active, (SELECT COUNT(*) FROM rides WHERE rider_id = u.id) AS total_rides FROM users u WHERE u.role = 'RIDER' ORDER BY u.id DESC LIMIT 50`)).rows,
+    surgeZones: (await pool.query('SELECT * FROM surge_zones ORDER BY id DESC')).rows,
     settings: await getSettingsMap()
   });
 });
+
+app.get('/api/admin/area-drivers', auth(['ADMIN']), async (req, res) => {
+  const { lat, lng, radius } = req.query;
+  const rad = Number(radius || 5);
+  const set = new Set();
+  for (const t of ['BIKE', 'CNG', 'CAR', 'PREMIUM', 'XL']) {
+    const list = await redis.georadius(`drivers:online:${t}`, Number(lng), Number(lat), rad, 'km');
+    list.forEach((id) => set.add(id));
+  }
+  res.json({ online_count: set.size });
+});
+
+app.post('/api/admin/surge-zones', auth(['ADMIN']), async (req, res) => {
+  const { name, center_lat, center_lng, radius_1_km, mult_1, radius_2_km, mult_2, start_time, end_time } = req.body;
+  res.json((await pool.query(`INSERT INTO surge_zones (name, center_lat, center_lng, radius_1_km, mult_1, radius_2_km, mult_2, start_time, end_time) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [name, Number(center_lat), Number(center_lng), Number(radius_1_km || 5), Number(mult_1 || 1.3), Number(radius_2_km || 10), Number(mult_2 || 1.15), start_time || '00:00', end_time || '23:59'])).rows[0]);
+});
+app.post('/api/admin/surge-zones/:id/toggle', auth(['ADMIN']), async (req, res) => res.json((await pool.query('UPDATE surge_zones SET is_active = NOT is_active WHERE id = $1 RETURNING *', [req.params.id])).rows[0]));
+app.delete('/api/admin/surge-zones/:id', auth(['ADMIN']), async (req, res) => { await pool.query('DELETE FROM surge_zones WHERE id = $1', [req.params.id]); res.json({ deleted: true }); });
+
+app.get('/api/admin/support', auth(['ADMIN']), async (req, res) => {
+  const tickets = (await pool.query(`SELECT t.*, u.name, u.phone FROM support_tickets t JOIN users u ON t.user_id = u.id ORDER BY t.updated_at DESC`)).rows;
+  for (const t of tickets) t.messages = (await pool.query('SELECT * FROM support_messages WHERE ticket_id = $1 ORDER BY created_at ASC', [t.id])).rows;
+  res.json({ tickets });
+});
+app.post('/api/admin/support/:id/reply', auth(['ADMIN']), async (req, res) => {
+  const m = (await pool.query("INSERT INTO support_messages (ticket_id, sender_role, msg_type, content, file_data, file_name) VALUES ($1,'ADMIN',$2,$3,$4,$5) RETURNING *", [req.params.id, req.body.msg_type || 'TEXT', req.body.content || '', req.body.file_data || null, req.body.file_name || null])).rows[0];
+  await pool.query('UPDATE support_tickets SET updated_at = NOW() WHERE id = $1', [req.params.id]);
+  res.json({ message: m });
+});
+app.post('/api/admin/support/:id/solve', auth(['ADMIN']), async (req, res) => res.json((await pool.query("UPDATE support_tickets SET status = 'CLOSED', updated_at = NOW() WHERE id = $1 RETURNING *", [req.params.id])).rows[0]));
 
 app.put('/api/admin/settings', auth(['ADMIN']), async (req, res) => {
   for (const [k, v] of Object.entries(req.body)) await pool.query('INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [k, typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')]);
   res.json(await getSettingsMap());
 });
+app.post('/api/admin/drivers/:id/toggle-class', auth(['ADMIN']), async (req, res) => {
+  const field = req.body.field;
+  if (!['allow_go', 'allow_premium', 'allow_xl'].includes(field)) return res.status(400).json({ error: 'Invalid field' });
+  const r = (await pool.query(`UPDATE driver_profiles SET ${field} = NOT ${field} WHERE user_id = $1 RETURNING *`, [req.params.id])).rows[0];
+  for (const k of ['CAR', 'PREMIUM', 'XL']) await redis.zrem(`drivers:online:${k}`, req.params.id.toString());
+  res.json(r);
+});
+
 app.post('/api/admin/monthly-rentals/:id/status', auth(['ADMIN']), async (req, res) => res.json((await pool.query('UPDATE monthly_rentals SET status = $1 WHERE id = $2 RETURNING *', [req.body.status, req.params.id])).rows[0]));
-app.post('/api/admin/drivers/:id/toggle-premium', auth(['ADMIN']), async (req, res) => { const r = await pool.query('UPDATE driver_profiles SET allow_premium = NOT allow_premium WHERE user_id = $1 RETURNING *', [req.params.id]); if (!r.rows[0]?.allow_premium) await redis.zrem('drivers:online:PREMIUM', req.params.id.toString()); res.json(r.rows[0]); });
 app.post('/api/admin/due-payments/:id/approve', auth(['ADMIN']), async (req, res) => {
   const client = await pool.connect();
   try {
@@ -795,18 +855,20 @@ app.post('/api/admin/quests/:id/toggle', auth(['ADMIN']), async (req, res) => re
 app.post('/api/admin/withdraws/:id/approve', auth(['ADMIN']), async (req, res) => res.json((await pool.query("UPDATE withdraw_requests SET status = 'COMPLETED', trx_id = $1 WHERE id = $2 RETURNING *", [req.body.trx_id || 'PAID', req.params.id])).rows[0]));
 app.post('/api/admin/withdraws/:id/reject', auth(['ADMIN']), async (req, res) => { const wr = (await pool.query("SELECT * FROM withdraw_requests WHERE id = $1 AND status = 'PENDING'", [req.params.id])).rows[0]; if (wr) { await pool.query('UPDATE wallets SET balance = balance + $1 WHERE user_id = $2', [wr.amount, wr.driver_id]); await pool.query("UPDATE withdraw_requests SET status = 'FAILED' WHERE id = $1", [wr.id]); } res.json({ refunded: true }); });
 
-// ৯. SOCKET.IO
 io.on('connection', (socket) => {
   socket.on('join_room', ({ role, userId }) => socket.join(`${role.toLowerCase()}_${userId}`));
-  socket.on('driver_location_update', async ({ driverId, vehicleType, lat, lng, accuracy, activeRideId, riderId }) => {
-    await redis.geoadd(`drivers:online:${vehicleType}`, lng, lat, driverId.toString());
-    if (vehicleType === 'CAR') {
-      const prem = await pool.query('SELECT allow_premium FROM driver_profiles WHERE user_id = $1', [driverId]);
-      if (prem.rows[0]?.allow_premium) await redis.geoadd('drivers:online:PREMIUM', lng, lat, driverId.toString());
+  socket.on('driver_location_update', async ({ driverId, vehicleType, lat, lng, accuracy, activeRideId, riderId, isStarted }) => {
+    if (vehicleType === 'CAR' || vehicleType === 'XL') {
+      const dp = (await pool.query('SELECT allow_go, allow_premium, allow_xl FROM driver_profiles WHERE user_id = $1', [driverId])).rows[0];
+      if (dp?.allow_go) await redis.geoadd('drivers:online:CAR', lng, lat, driverId.toString());
+      if (dp?.allow_premium) await redis.geoadd('drivers:online:PREMIUM', lng, lat, driverId.toString());
+      if (dp?.allow_xl || vehicleType === 'XL') await redis.geoadd('drivers:online:XL', lng, lat, driverId.toString());
+    } else {
+      await redis.geoadd(`drivers:online:${vehicleType}`, lng, lat, driverId.toString());
     }
-    if (activeRideId) {
+    if (riderId) io.to(`rider_${riderId}`).emit('driver_live_location', { lat, lng });
+    if (activeRideId && isStarted) {
       await redis.rpush(`ride:gps:${activeRideId}`, JSON.stringify({ lat, lng, accuracy, timestamp: Date.now() }));
-      if (riderId) io.to(`rider_${riderId}`).emit('driver_live_location', { lat, lng });
     }
   });
 });

@@ -44,42 +44,74 @@
 
     <div class="flex overflow-x-auto gap-2 pb-1">
       <button onclick="showTab('RIDES')" id="t_RIDES" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-[#00D2B8] text-[#0F172A] whitespace-nowrap">🗺️ লাইভ রাইডস</button>
+      <button onclick="showTab('SURGE')" id="t_SURGE" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">⚡ Surge ও Peak Hour</button>
+      <button onclick="showTab('SUPPORT')" id="t_SUPPORT" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">💬 Support চ্যাট</button>
+      <button onclick="showTab('DRIVERS')" id="t_DRIVERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">🪪 ড্রাইভার (Go/Prem/XL)</button>
       <button onclick="showTab('MONTHLY')" id="t_MONTHLY" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">📅 Monthly Rentals</button>
-      <button onclick="showTab('DRIVERS')" id="t_DRIVERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">🪪 ড্রাইভার ও ডকুমেন্টস</button>
       <button onclick="showTab('RIDERS')" id="t_RIDERS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">👥 যাত্রী</button>
       <button onclick="showTab('RATES')" id="t_RATES" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">⚙️ ভাড়া ও প্রমো</button>
       <button onclick="showTab('WITHDRAWS')" id="t_WITHDRAWS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">💸 উইথড্র ও বকেয়া</button>
-      <button onclick="showTab('SETTINGS')" id="t_SETTINGS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">📄 ডকুমেন্ট, পেমেন্ট ও সেটিংস</button>
+      <button onclick="showTab('SETTINGS')" id="t_SETTINGS" class="tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">📄 সেটিংস ও রেফারেল</button>
     </div>
 
     <div id="sec_RIDES" class="tabSec bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs"></div>
-    <div id="sec_MONTHLY" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs"></div>
+
+    <div id="sec_SURGE" class="tabSec hidden space-y-4">
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs">
+        <h2 class="font-extrabold text-[#A3E635] text-sm">🔥 Peak Hour Boost (ম্যাপ ক্লাউড ছাড়া নির্দিষ্ট সময়ে ভাড়া বাড়ানো)</h2>
+        <div class="flex flex-wrap gap-3 items-center">
+          <label class="flex items-center gap-2 font-bold text-[#00D2B8]"><input type="checkbox" id="pk_en" class="w-4 h-4" /> Peak Hour চালু</label>
+          <input id="pk_start" placeholder="08:00" class="w-24 p-2 rounded bg-slate-800 border border-slate-700" /> থেকে
+          <input id="pk_end" placeholder="11:00" class="w-24 p-2 rounded bg-slate-800 border border-slate-700" />
+          Multiplier: <input id="pk_mult" placeholder="1.25" class="w-20 p-2 rounded bg-slate-800 border border-slate-700" /> x
+          <button onclick="savePeakHour()" class="bg-[#A3E635] text-[#0F172A] font-extrabold px-4 py-2 rounded-xl">সেভ</button>
+        </div>
+      </div>
+
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs">
+        <h2 class="font-extrabold text-[#00D2B8] text-sm">☁️ এরিয়া Surge Zone তৈরি (ড্রাইভার ম্যাপে ক্লাউড দেখাবে)</h2>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="presetArea('Mirpur',23.8069,90.3687)" class="bg-slate-800 px-3 py-1.5 rounded-lg">Mirpur</button>
+          <button onclick="presetArea('Uttara',23.8759,90.3795)" class="bg-slate-800 px-3 py-1.5 rounded-lg">Uttara</button>
+          <button onclick="presetArea('Gulshan',23.7946,90.4143)" class="bg-slate-800 px-3 py-1.5 rounded-lg">Gulshan</button>
+          <button onclick="presetArea('Dhanmondi',23.7461,90.3742)" class="bg-slate-800 px-3 py-1.5 rounded-lg">Dhanmondi</button>
+          <button onclick="presetArea('Motijheel',23.7330,90.4172)" class="bg-slate-800 px-3 py-1.5 rounded-lg">Motijheel</button>
+          <span id="areaOnlineBadge" class="px-3 py-1.5 rounded-lg bg-[#00D2B8]/20 text-[#00D2B8] font-bold"></span>
+        </div>
+        <div class="grid md:grid-cols-4 gap-2">
+          <input id="sz_name" placeholder="এরিয়া নাম (Mirpur)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+          <input id="sz_lat" placeholder="Latitude (23.8069)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+          <input id="sz_lng" placeholder="Longitude (90.3687)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+          <div class="flex gap-1"><input id="sz_st" value="00:00" class="w-1/2 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /><input id="sz_et" value="23:59" class="w-1/2 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <input id="sz_r1" value="5" placeholder="প্রথম দূরত্ব (5 km)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+          <input id="sz_m1" value="1.3" placeholder="১ম গুন (1.3x)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+          <input id="sz_r2" value="10" placeholder="২য় দূরত্ব (10 km)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+          <input id="sz_m2" value="1.15" placeholder="২য় গুন (1.15x)" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700" />
+        </div>
+        <button onclick="createSurge()" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-5 py-2.5 rounded-xl">Surge Zone চালু করুন</button>
+        <div id="surgeList" class="space-y-2 pt-2"></div>
+      </div>
+    </div>
+
+    <div id="sec_SUPPORT" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs"></div>
     <div id="sec_DRIVERS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3"></div>
+    <div id="sec_MONTHLY" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs"></div>
     <div id="sec_RIDERS" class="tabSec hidden bg-slate-900 p-4 rounded-2xl border border-slate-800 grid md:grid-cols-2 gap-2"></div>
 
     <div id="sec_RATES" class="tabSec hidden space-y-4">
-      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
-        <h2 class="font-extrabold text-[#A3E635] mb-3">⚙️ ভাড়া ও কমিশন (BIKE, CNG, CAR, PREMIUM, XL)</h2>
-        <div id="ratesList" class="grid md:grid-cols-5 gap-3"></div>
-      </div>
+      <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800"><h2 class="font-extrabold text-[#A3E635] mb-3">⚙️ ভাড়া ও কমিশন</h2><div id="ratesList" class="grid md:grid-cols-5 gap-3"></div></div>
       <div class="grid md:grid-cols-2 gap-4">
         <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
           <h2 class="font-extrabold text-[#00D2B8]">🎟️ যাত্রী প্রমো</h2>
           <input id="pCode" placeholder="কোড (ZODDIR50)" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
-          <div class="flex gap-2">
-            <select id="pType" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm"><option value="FIXED">Fixed (৳)</option><option value="PERCENT">Percent (%)</option></select>
-            <input id="pVal" type="number" placeholder="ছাড় (50)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
-          </div>
+          <div class="flex gap-2"><select id="pType" class="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm"><option value="FIXED">Fixed (৳)</option><option value="PERCENT">Percent (%)</option></select><input id="pVal" type="number" placeholder="ছাড় (50)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" /></div>
           <button onclick="createPromo()" class="w-full bg-[#00D2B8] text-[#0F172A] font-extrabold py-2.5 rounded-xl text-sm">প্রমো চালু করুন</button>
           <div id="promosList" class="space-y-1.5 text-xs"></div>
         </div>
         <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3">
           <h2 class="font-extrabold text-[#A3E635]">🏆 ড্রাইভার বোনাস (Quest)</h2>
           <input id="qTitle" placeholder="টাইটেল" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
-          <div class="flex gap-2">
-            <input id="qTrips" type="number" placeholder="ট্রিপ (10)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
-            <input id="qBonus" type="number" placeholder="বোনাস (300)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" />
-          </div>
+          <div class="flex gap-2"><input id="qTrips" type="number" placeholder="ট্রিপ (10)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" /><input id="qBonus" type="number" placeholder="বোনাস (300)" class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm" /></div>
           <button onclick="createQuest()" class="w-full bg-[#A3E635] text-[#0F172A] font-extrabold py-2.5 rounded-xl text-sm">অফার চালু করুন</button>
           <div id="questsList" class="space-y-1.5 text-xs"></div>
         </div>
@@ -91,39 +123,47 @@
       <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-2"><h2 class="font-extrabold text-[#A3E635]">💸 ড্রাইভার উইথড্র রিকোয়েস্ট</h2><div id="withdrawList" class="space-y-2 text-xs"></div></div>
     </div>
 
-    <!-- SETTINGS: PAYMENT METHODS ON/OFF + DOCS + RADIUS + MERCHANT -->
     <div id="sec_SETTINGS" class="tabSec hidden bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-5">
       <div>
-        <h2 class="font-extrabold text-[#00D2B8] text-base mb-2">💳 যাত্রী অ্যাপে পেমেন্ট মেথড ON / OFF (বন্ধ করলে শুধু Cash দেখাবে)</h2>
+        <h2 class="font-extrabold text-[#00D2B8] text-base mb-2">💳 যাত্রী অ্যাপে পেমেন্ট মেথড ON / OFF</h2>
         <div class="flex flex-wrap gap-5 bg-slate-800 p-4 rounded-xl border border-slate-700 text-sm">
-          <label class="flex items-center gap-2 font-bold text-[#00D2B8] cursor-pointer"><input type="checkbox" id="en_bkash" class="w-4 h-4 accent-[#00D2B8]" /> 🩷 bKash চালু</label>
-          <label class="flex items-center gap-2 font-bold text-[#F37021] cursor-pointer"><input type="checkbox" id="en_nagad" class="w-4 h-4 accent-[#F37021]" /> 🟠 Nagad চালু</label>
-          <label class="flex items-center gap-2 font-bold text-[#A3E635] cursor-pointer"><input type="checkbox" id="en_card" class="w-4 h-4 accent-[#A3E635]" /> 💳 Credit/Debit Card চালু</label>
+          <label class="flex items-center gap-2 font-bold text-[#00D2B8]"><input type="checkbox" id="en_bkash" class="w-4 h-4" /> bKash চালু</label>
+          <label class="flex items-center gap-2 font-bold text-[#F37021]"><input type="checkbox" id="en_nagad" class="w-4 h-4" /> Nagad চালু</label>
+          <label class="flex items-center gap-2 font-bold text-[#A3E635]"><input type="checkbox" id="en_card" class="w-4 h-4" /> Card চালু</label>
         </div>
       </div>
 
       <div>
-        <h2 class="font-extrabold text-[#A3E635] text-base mb-2">📄 গাড়ি অনুযায়ী প্রয়োজনীয় ডকুমেন্ট সেট করুন (কমা `,` দিয়ে লিখুন)</h2>
+        <h2 class="font-extrabold text-[#A3E635] text-base mb-2">🎁 ড্রাইভার রেফারেল প্রোগ্রাম সেটিংস</h2>
+        <div class="grid md:grid-cols-3 gap-3 text-xs">
+          <div><label class="text-slate-400">বোনাস টাকা (BDT)</label><input id="ref_bonus" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">টার্গেট ট্রিপ (যেমন: 15)</label><input id="ref_trips" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">সময়সীমা (কত দিন: 30)</label><input id="ref_days" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="font-extrabold text-[#A3E635] text-base mb-2">📄 গাড়ি অনুযায়ী ডকুমেন্ট লিস্ট (কমা `,` দিয়ে)</h2>
         <div class="grid md:grid-cols-2 gap-3 text-xs">
-          <div><label class="text-slate-400">🏍️ Moto (BIKE) ডকুমেন্টস</label><input id="doc_BIKE" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">🛺 CNG ডকুমেন্টস</label><input id="doc_CNG" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">🚗 Car (CAR) ডকুমেন্টস</label><input id="doc_CAR" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">🚐 XL (Noah/HiAce) ডকুমেন্টস</label><input id="doc_XL" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">BIKE</label><input id="doc_BIKE" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">CNG</label><input id="doc_CNG" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">CAR</label><input id="doc_CAR" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">XL</label><input id="doc_XL" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
         </div>
       </div>
 
       <div>
-        <h2 class="font-extrabold text-[#00D2B8] text-base mb-2">📡 ম্যাপ Radius এবং বিকাশ/নগদ/ব্যাংক মার্চেন্ট সেটিংস</h2>
+        <h2 class="font-extrabold text-[#00D2B8] text-base mb-2">📡 Radius এবং মার্চেন্ট সেটিংস</h2>
         <div class="grid md:grid-cols-2 gap-3 text-xs">
           <div><label class="text-slate-400">ম্যাপে গাড়ি দেখার Radius (KM)</label><input id="set_view_rad" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">ট্রিপ রিকোয়েস্ট যাওয়ার Radius (KM)</label><input id="set_disp_rad" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">🩷 bKash Merchant নম্বর</label><input id="set_bkash_m" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">bKash পেমেন্ট লিংক</label><input id="set_bkash_l" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">bKash QR ছবির লিংক</label><input id="set_bkash_q" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">🟠 Nagad Merchant নম্বর</label><input id="set_nagad_m" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">Nagad পেমেন্ট লিংক</label><input id="set_nagad_l" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div><label class="text-slate-400">Nagad QR ছবির লিংক</label><input id="set_nagad_q" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
-          <div class="md:col-span-2"><label class="text-slate-400">🏦 ব্যাংক অ্যাকাউন্ট তথ্য</label><input id="set_bank" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">ট্রিপ রিকোয়েস্ট Radius (KM)</label><input id="set_disp_rad" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">bKash Merchant</label><input id="set_bkash_m" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">bKash Link</label><input id="set_bkash_l" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">bKash QR URL</label><input id="set_bkash_q" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">Nagad Merchant</label><input id="set_nagad_m" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">Nagad Link</label><input id="set_nagad_l" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div><label class="text-slate-400">Nagad QR URL</label><input id="set_nagad_q" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
+          <div class="md:col-span-2"><label class="text-slate-400">ব্যাংক অ্যাকাউন্ট তথ্য</label><input id="set_bank" class="w-full mt-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700" /></div>
         </div>
       </div>
       <button onclick="saveSettings()" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-6 py-3 rounded-xl text-sm">সব সেটিংস সেভ করুন</button>
@@ -147,6 +187,7 @@
     document.getElementById(`sec_${k}`).classList.remove('hidden');
     document.querySelectorAll('.tabBtn').forEach(b => b.className = 'tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap');
     document.getElementById(`t_${k}`).className = 'tabBtn px-4 py-2.5 rounded-xl text-xs font-extrabold bg-[#00D2B8] text-[#0F172A] whitespace-nowrap';
+    if (k === 'SUPPORT') loadSupport();
   }
 
   async function registerAdmin() { const r = await fetch(`${API}/api/auth/register`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: val('name') || 'Admin', phone: val('phone'), password: val('password'), role: 'ADMIN' }) }); const d = await r.json(); if (d.token) saveToken(d.token); else setMsg(d.error); }
@@ -156,6 +197,63 @@
   function val(id) { return document.getElementById(id).value.trim(); }
   function setMsg(m) { document.getElementById('authMsg').innerText = m; }
   function showDoc(title, src) { document.getElementById('imgTitle').innerText = title; document.getElementById('imgPreview').src = src; document.getElementById('imgModal').classList.remove('hidden'); }
+
+  async function presetArea(name, lat, lng) {
+    document.getElementById('sz_name').value = name;
+    document.getElementById('sz_lat').value = lat;
+    document.getElementById('sz_lng').value = lng;
+    const r = await fetch(`${API}/api/admin/area-drivers?lat=${lat}&lng=${lng}&radius=${val('sz_r1') || 5}`, { headers: { Authorization: `Bearer ${token}` } });
+    const d = await r.json();
+    document.getElementById('areaOnlineBadge').innerText = `${name}-এ এখন ${d.online_count} জন ড্রাইভার অনলাইনে আছে`;
+  }
+
+  async function loadSupport() {
+    const res = await fetch(`${API}/api/admin/support`, { headers: { Authorization: `Bearer ${token}` } });
+    const d = await res.json();
+    document.getElementById('sec_SUPPORT').innerHTML = (d.tickets || []).map(tk => `
+      <div class="bg-slate-800/90 p-3.5 rounded-2xl border border-slate-700 space-y-2">
+        <div class="flex justify-between items-center">
+          <div><b>${tk.name}</b> (${tk.phone}) • <span class="text-[#00D2B8] font-bold">${tk.user_role}</span></div>
+          <div class="flex gap-2 items-center">
+            <span class="px-2 py-0.5 rounded font-bold ${tk.status === 'OPEN' ? 'bg-amber-900 text-amber-300' : 'bg-emerald-900 text-emerald-300'}">${tk.status}</span>
+            ${tk.status === 'OPEN' ? `<button onclick="solveTicket(${tk.id})" class="bg-[#A3E635] text-[#0F172A] font-extrabold px-2.5 py-1 rounded-lg">✅ Mark Solved</button>` : ''}
+          </div>
+        </div>
+        <div class="space-y-1.5 max-h-48 overflow-y-auto bg-slate-900/80 p-2.5 rounded-xl">
+          ${(tk.messages || []).map(m => `
+            <div class="${m.sender_role === 'ADMIN' ? 'text-right text-[#00D2B8]' : 'text-left text-slate-200'}">
+              <span class="text-[10px] text-slate-400">[${m.sender_role}]</span>
+              ${m.msg_type === 'VOICE' && m.file_data ? `<div><audio controls src="${m.file_data}" class="h-8 inline-block"></audio></div>` : ''}
+              ${m.msg_type === 'IMAGE' && m.file_data ? `<div><img src="${m.file_data}" onclick="showDoc('Chat Image','${m.file_data}')" class="w-24 h-24 object-cover rounded-lg inline-block cursor-pointer" /></div>` : ''}
+              ${m.content ? `<div>${m.content}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+        <div class="flex gap-2">
+          <input id="rep_${tk.id}" placeholder="উত্তর লিখুন..." class="flex-1 p-2 rounded-xl bg-slate-900 border border-slate-700" />
+          <input type="file" id="repFile_${tk.id}" accept="image/*" class="hidden" onchange="sendAdminFile(${tk.id}, this)" />
+          <button onclick="document.getElementById('repFile_${tk.id}').click()" class="bg-slate-700 px-3 py-2 rounded-xl font-bold">📎</button>
+          <button onclick="replyTicket(${tk.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-4 py-2 rounded-xl">পাঠান</button>
+        </div>
+      </div>
+    `).join('') || '<p class="text-slate-500">কোনো সাপোর্ট মেসেজ নেই</p>';
+  }
+
+  async function replyTicket(id) {
+    const txt = val(`rep_${id}`); if (!txt) return;
+    await fetch(`${API}/api/admin/support/${id}/reply`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ msg_type: 'TEXT', content: txt }) });
+    loadSupport();
+  }
+  function sendAdminFile(id, input) {
+    const file = input.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      await fetch(`${API}/api/admin/support/${id}/reply`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ msg_type: 'IMAGE', content: file.name, file_data: reader.result, file_name: file.name }) });
+      loadSupport();
+    };
+    reader.readAsDataURL(file);
+  }
+  async function solveTicket(id) { await fetch(`${API}/api/admin/support/${id}/solve`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadSupport(); }
 
   async function loadDashboard() {
     document.getElementById('authBox').classList.add('hidden');
@@ -173,6 +271,13 @@
     document.getElementById('en_bkash').checked = s.enable_bkash === 'true';
     document.getElementById('en_nagad').checked = s.enable_nagad === 'true';
     document.getElementById('en_card').checked = s.enable_card === 'true';
+    document.getElementById('pk_en').checked = s.peak_hour_enabled === 'true';
+    document.getElementById('pk_start').value = s.peak_hour_start || '08:00';
+    document.getElementById('pk_end').value = s.peak_hour_end || '11:00';
+    document.getElementById('pk_mult').value = s.peak_hour_multiplier || '1.25';
+    document.getElementById('ref_bonus').value = s.referral_bonus_amount || '500';
+    document.getElementById('ref_trips').value = s.referral_target_trips || '15';
+    document.getElementById('ref_days').value = s.referral_days_limit || '30';
 
     const rDocs = s.required_docs || {};
     ['BIKE', 'CNG', 'CAR', 'XL'].forEach(t => { document.getElementById(`doc_${t}`).value = (rDocs[t] || []).join(', '); });
@@ -186,11 +291,21 @@
     document.getElementById('set_nagad_q').value = s.nagad_qr_url || '';
     document.getElementById('set_bank').value = s.bank_details || '';
 
+    document.getElementById('surgeList').innerHTML = (d.surgeZones || []).map(z => `
+      <div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center">
+        <div><b>${z.name}</b> • ${z.radius_1_km}km (${z.mult_1}x) | ${z.radius_2_km}km (${z.mult_2}x) • ⏰ ${z.start_time}-${z.end_time}</div>
+        <div class="flex gap-2">
+          <button onclick="toggleSurge(${z.id})" class="px-2.5 py-1 rounded font-bold ${z.is_active ? 'bg-[#00D2B8] text-[#0F172A]' : 'bg-slate-700'}">${z.is_active ? 'ON' : 'OFF'}</button>
+          <button onclick="delSurge(${z.id})" class="bg-rose-600 px-2.5 py-1 rounded font-bold">🗑️</button>
+        </div>
+      </div>
+    `).join('');
+
     document.getElementById('sec_RIDES').innerHTML = (d.rides || []).map(r => `
       <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 flex flex-wrap justify-between items-center gap-2">
         <div>
           <span class="font-extrabold">#${r.id} [${r.ride_type || 'RIDE'} • ${r.vehicle_type}]</span> <span class="ml-1 px-2 py-0.5 rounded bg-slate-700 text-[#00D2B8]">${r.status}</span>
-          ${r.ride_pin ? `<span class="ml-1 px-2 py-0.5 rounded bg-slate-950 text-[#A3E635]">PIN: ${r.ride_pin}</span>` : ''}
+          ${r.surge_multiplier > 1 ? `<span class="ml-1 px-2 py-0.5 rounded bg-amber-900 text-amber-300">⚡ ${r.surge_multiplier}x</span>` : ''}
           <div class="text-slate-300 mt-1">যাত্রী: ${r.rider_name || '-'} • ড্রাইভার: ${r.driver_name || '-'}</div>
           <div class="text-slate-400">${r.pickup_address} → ${r.drop_address}</div>
         </div>
@@ -203,44 +318,33 @@
 
     document.getElementById('sec_MONTHLY').innerHTML = (d.monthlyRentals || []).map(m => `
       <div class="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700 space-y-1.5">
-        <div class="flex justify-between items-center">
-          <span class="font-extrabold text-sm text-[#00D2B8]">${m.vehicle_type} • ${m.brand_model} (${m.purpose})</span>
-          <span class="px-2 py-0.5 rounded font-bold bg-slate-700 text-[#A3E635]">${m.status}</span>
-        </div>
-        <div>কাস্টমার: <b>${m.user_name || '-'}</b> • 📞 <a href="tel:${m.phone}" class="text-[#00D2B8] underline">${m.phone}</a> • ✉️ ${m.email}</div>
-        <div>তারিখ: ${m.start_date} ${m.start_time} • মেয়াদ: <b>${m.duration_text}</b> • ⛽ <b>${m.fuel_option}</b></div>
-        <div>লোকেশন: ${m.location} • কাস্টমারের অফারকৃত ভাড়া: <b class="text-[#A3E635] text-sm">৳${m.offered_budget}</b></div>
-        <div class="flex gap-2 pt-1">
-          <button onclick="setMonthlyStatus(${m.id}, 'CONFIRMED')" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1 rounded-lg">✅ Confirm</button>
-          <button onclick="setMonthlyStatus(${m.id}, 'CANCELLED')" class="bg-rose-600 text-white font-bold px-3 py-1 rounded-lg">❌ Cancel</button>
-        </div>
+        <div class="flex justify-between items-center"><span class="font-extrabold text-sm text-[#00D2B8]">${m.vehicle_type} • ${m.brand_model} (${m.purpose})</span><span class="px-2 py-0.5 rounded font-bold bg-slate-700 text-[#A3E635]">${m.status}</span></div>
+        <div>কাস্টমার: <b>${m.user_name || '-'}</b> • 📞 ${m.phone} • ✉️ ${m.email}</div>
+        <div>তারিখ: ${m.start_date} • মেয়াদ: <b>${m.duration_text}</b> • ⛽ ${m.fuel_option} • <b class="text-[#A3E635]">৳${m.offered_budget}</b></div>
+        <div class="flex gap-2 pt-1"><button onclick="setMonthlyStatus(${m.id}, 'CONFIRMED')" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1 rounded-lg">✅ Confirm</button><button onclick="setMonthlyStatus(${m.id}, 'CANCELLED')" class="bg-rose-600 text-white font-bold px-3 py-1 rounded-lg">❌ Cancel</button></div>
       </div>
-    `).join('') || '<p class="text-slate-500">কোনো Monthly Rental রিকোয়েস্ট নেই</p>';
+    `).join('') || '<p class="text-slate-500">নেই</p>';
 
     document.getElementById('sec_DRIVERS').innerHTML = (d.drivers || []).map(dr => {
-      const dynDocs = dr.docs_json || {};
-      const dynBtns = Object.entries(dynDocs).map(([k, v]) => `<button onclick="showDoc('${dr.name} - ${k}', '${v}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">📄 ${k}</button>`).join('');
+      const dynBtns = Object.entries(dr.docs_json || {}).map(([k, v]) => `<button onclick="showDoc('${dr.name} - ${k}', '${v}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">📄 ${k}</button>`).join('');
+      const isCarOrXl = dr.vehicle_type === 'CAR' || dr.vehicle_type === 'XL';
       return `
       <div class="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700 space-y-2">
         <div class="flex flex-wrap justify-between items-center gap-2">
-          <div class="flex items-center gap-2.5">
-            ${dr.avatar_url ? `<img src="${dr.avatar_url}" class="w-10 h-10 rounded-full object-cover border border-[#00D2B8]" />` : `<div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center">D</div>`}
-            <div>
-              <div class="font-extrabold">${dr.name} (${dr.phone})</div>
-              <div class="text-xs text-[#00D2B8]">${dr.vehicle_type} • ${dr.vehicle_model || ''} • ${dr.plate_number || ''} • ওয়ালেট: <b class="text-[#A3E635]">৳${dr.wallet_balance}</b></div>
-            </div>
+          <div>
+            <div class="font-extrabold">${dr.name} (${dr.phone}) • ★ ${dr.rating || '5.00'}</div>
+            <div class="text-xs text-[#00D2B8]">${dr.vehicle_type} • ${dr.vehicle_model || ''} • ${dr.plate_number || ''} • ওয়ালেট: <b class="text-[#A3E635]">৳${dr.wallet_balance}</b></div>
           </div>
-          <div class="flex gap-1.5 text-xs">
+          <div class="flex flex-wrap gap-1.5 text-xs">
             <span class="px-2 py-1 rounded-lg font-bold ${dr.verification_status === 'APPROVED' ? 'bg-emerald-900 text-emerald-300' : 'bg-amber-900 text-amber-300'}">${dr.verification_status || 'PENDING'}</span>
-            ${dr.vehicle_type === 'CAR' ? `<button onclick="togglePremium(${dr.user_id})" class="px-2.5 py-1 rounded-lg font-extrabold ${dr.allow_premium ? 'bg-[#A3E635] text-[#0F172A]' : 'bg-slate-700 text-slate-300'}">${dr.allow_premium ? '⭐ Premium ON' : '☆ Premium OFF'}</button>` : ''}
+            ${isCarOrXl ? `
+              <button onclick="toggleClass(${dr.user_id}, 'allow_go')" class="px-2 py-1 rounded font-bold ${dr.allow_go ? 'bg-[#00D2B8] text-[#0F172A]' : 'bg-slate-700'}">Go ${dr.allow_go ? 'ON' : 'OFF'}</button>
+              <button onclick="toggleClass(${dr.user_id}, 'allow_premium')" class="px-2 py-1 rounded font-bold ${dr.allow_premium ? 'bg-[#A3E635] text-[#0F172A]' : 'bg-slate-700'}">Premium ${dr.allow_premium ? 'ON' : 'OFF'}</button>
+              <button onclick="toggleClass(${dr.user_id}, 'allow_xl')" class="px-2 py-1 rounded font-bold ${dr.allow_xl ? 'bg-purple-400 text-[#0F172A]' : 'bg-slate-700'}">XL ${dr.allow_xl ? 'ON' : 'OFF'}</button>
+            ` : ''}
           </div>
         </div>
-        <div class="flex flex-wrap gap-2 text-xs">
-          ${dynBtns}
-          ${dr.nid_photo ? `<button onclick="showDoc('${dr.name} - NID', '${dr.nid_photo}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">NID</button>` : ''}
-          ${dr.license_photo ? `<button onclick="showDoc('${dr.name} - License', '${dr.license_photo}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">License</button>` : ''}
-          ${dr.vehicle_paper_photo ? `<button onclick="showDoc('${dr.name} - Paper', '${dr.vehicle_paper_photo}')" class="bg-slate-700 px-2.5 py-1 rounded-lg">Reg Paper</button>` : ''}
-        </div>
+        <div class="flex flex-wrap gap-2 text-xs">${dynBtns}</div>
         <div class="flex flex-wrap gap-2 pt-1 text-xs">
           <button onclick="verifyDriver(${dr.user_id}, 'APPROVED')" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1.5 rounded-lg">✅ Approve</button>
           <button onclick="verifyDriver(${dr.user_id}, 'REJECTED')" class="bg-amber-500 text-[#0F172A] font-extrabold px-3 py-1.5 rounded-lg">❌ Reject</button>
@@ -248,41 +352,35 @@
           <button onclick="toggleUserActive(${dr.user_id}, ${!dr.is_active})" class="${dr.is_active ? 'bg-rose-600 text-white' : 'bg-sky-500 text-[#0F172A]'} font-extrabold px-3 py-1.5 rounded-lg">${dr.is_active ? '🚫 Suspend' : '🔓 Active'}</button>
         </div>
       </div>`;
-    }).join('') || '<p class="text-slate-500 text-xs">কোনো ড্রাইভার নেই</p>';
+    }).join('');
 
     document.getElementById('sec_RIDERS').innerHTML = (d.riders || []).map(rd => `<div class="bg-slate-800/80 p-3 rounded-xl flex justify-between items-center text-xs border border-slate-700"><div><span class="font-extrabold">${rd.name}</span> (${rd.phone})<div class="text-slate-400">রাইড: ${rd.total_rides}</div></div><button onclick="toggleUserActive(${rd.id}, ${!rd.is_active})" class="${rd.is_active ? 'bg-rose-600 text-white' : 'bg-[#00D2B8] text-[#0F172A]'} font-extrabold px-3 py-1.5 rounded-lg">${rd.is_active ? 'Suspend' : 'Active'}</button></div>`).join('');
-
-    document.getElementById('ratesList').innerHTML = d.rates.map(r => `
-      <div class="bg-slate-800 p-3 rounded-xl space-y-2 text-xs">
-        <div class="font-extrabold text-[#00D2B8] text-sm">${r.vehicle_type}</div>
-        <div>Base: <input id="b_${r.vehicle_type}" value="${r.base_fare}" class="w-16 bg-slate-900 p-1 rounded" /></div>
-        <div>KM: <input id="k_${r.vehicle_type}" value="${r.per_km_rate}" class="w-16 bg-slate-900 p-1 rounded" /></div>
-        <div>Min: <input id="m_${r.vehicle_type}" value="${r.per_min_rate}" class="w-16 bg-slate-900 p-1 rounded" /></div>
-        <div>MinF: <input id="mf_${r.vehicle_type}" value="${r.min_fare}" class="w-16 bg-slate-900 p-1 rounded" /></div>
-        <div>Comm%: <input id="c_${r.vehicle_type}" value="${r.commission_percent}" class="w-16 bg-slate-900 p-1 rounded" /></div>
-        <button onclick="updateRate('${r.vehicle_type}')" class="w-full bg-[#A3E635] text-[#0F172A] font-extrabold py-1.5 rounded-lg">আপডেট</button>
-      </div>
-    `).join('');
-
-    document.getElementById('promosList').innerHTML = d.promos.map(p => `<div class="bg-slate-800 p-2 rounded-xl flex justify-between"><span><b>${p.code}</b> (${p.discount_value} ${p.discount_type})</span><button onclick="togglePromo(${p.id})" class="px-2 py-0.5 rounded font-bold ${p.is_active ? 'bg-[#00D2B8] text-[#0F172A]' : 'bg-slate-700'}">${p.is_active ? 'ON' : 'OFF'}</button></div>`).join('');
+    document.getElementById('ratesList').innerHTML = d.rates.map(r => `<div class="bg-slate-800 p-3 rounded-xl space-y-2 text-xs"><div class="font-extrabold text-[#00D2B8] text-sm">${r.vehicle_type}</div><div>Base: <input id="b_${r.vehicle_type}" value="${r.base_fare}" class="w-16 bg-slate-900 p-1 rounded" /></div><div>KM: <input id="k_${r.vehicle_type}" value="${r.per_km_rate}" class="w-16 bg-slate-900 p-1 rounded" /></div><div>Min: <input id="m_${r.vehicle_type}" value="${r.per_min_rate}" class="w-16 bg-slate-900 p-1 rounded" /></div><div>MinF: <input id="mf_${r.vehicle_type}" value="${r.min_fare}" class="w-16 bg-slate-900 p-1 rounded" /></div><div>Comm%: <input id="c_${r.vehicle_type}" value="${r.commission_percent}" class="w-16 bg-slate-900 p-1 rounded" /></div><button onclick="updateRate('${r.vehicle_type}')" class="w-full bg-[#A3E635] text-[#0F172A] font-extrabold py-1.5 rounded-lg">আপডেট</button></div>`).join('');
+    document.getElementById('promosList').innerHTML = d.promos.map(p => `<div class="bg-slate-800 p-2 rounded-xl flex justify-between"><span><b>${p.code}</b> (${p.discount_value})</span><button onclick="togglePromo(${p.id})" class="px-2 py-0.5 rounded font-bold ${p.is_active ? 'bg-[#00D2B8] text-[#0F172A]' : 'bg-slate-700'}">${p.is_active ? 'ON' : 'OFF'}</button></div>`).join('');
     document.getElementById('questsList').innerHTML = d.quests.map(q => `<div class="bg-slate-800 p-2 rounded-xl flex justify-between"><span><b>${q.title}</b> (৳${q.bonus_amount})</span><button onclick="toggleQuest(${q.id})" class="px-2 py-0.5 rounded font-bold ${q.is_active ? 'bg-[#A3E635] text-[#0F172A]' : 'bg-slate-700'}">${q.is_active ? 'ON' : 'OFF'}</button></div>`).join('');
-    document.getElementById('dueList').innerHTML = (d.duePayments || []).map(dp => `<div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center"><div><b>${dp.name}</b> • <b class="text-[#00D2B8]">৳${dp.amount}</b> via ${dp.method} (${dp.trx_id})</div>${dp.status === 'PENDING' ? `<button onclick="approveDue(${dp.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1 rounded-lg">✅ Approve</button>` : dp.status}</div>`).join('') || '<p class="text-slate-500">নেই</p>';
-    document.getElementById('withdrawList').innerHTML = d.withdraws.map(w => `<div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center"><div><b>${w.name}</b> — <b class="text-[#A3E635]">৳${w.amount}</b> via ${w.method} (${w.account_number})</div><div>${w.status === 'PENDING' ? `<button onclick="approveWithdraw(${w.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-2.5 py-1 rounded-lg mr-1">✅</button><button onclick="rejectWithdraw(${w.id})" class="bg-rose-600 text-white font-bold px-2.5 py-1 rounded-lg">❌</button>` : w.status}</div></div>`).join('') || '<p class="text-slate-500">নেই</p>';
+    document.getElementById('dueList').innerHTML = (d.duePayments || []).map(dp => `<div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center"><div><b>${dp.name}</b> • <b class="text-[#00D2B8]">৳${dp.amount}</b> via ${dp.method} (${dp.trx_id})</div>${dp.status === 'PENDING' ? `<button onclick="approveDue(${dp.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-3 py-1 rounded-lg">✅ Approve</button>` : dp.status}</div>`).join('') || 'নেই';
+    document.getElementById('withdrawList').innerHTML = d.withdraws.map(w => `<div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center"><div><b>${w.name}</b> — <b class="text-[#A3E635]">৳${w.amount}</b> via ${w.method} (${w.account_number})</div><div>${w.status === 'PENDING' ? `<button onclick="approveWithdraw(${w.id})" class="bg-[#00D2B8] text-[#0F172A] font-extrabold px-2.5 py-1 rounded-lg mr-1">✅</button><button onclick="rejectWithdraw(${w.id})" class="bg-rose-600 text-white font-bold px-2.5 py-1 rounded-lg">❌</button>` : w.status}</div></div>`).join('') || 'নেই';
   }
 
+  async function savePeakHour() {
+    await fetch(`${API}/api/admin/settings`, { method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ peak_hour_enabled: document.getElementById('pk_en').checked ? 'true' : 'false', peak_hour_start: val('pk_start'), peak_hour_end: val('pk_end'), peak_hour_multiplier: val('pk_mult') }) });
+    alert('Peak Hour সেভ হয়েছে! ✅');
+  }
+  async function createSurge() {
+    await fetch(`${API}/api/admin/surge-zones`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ name: val('sz_name'), center_lat: val('sz_lat'), center_lng: val('sz_lng'), radius_1_km: val('sz_r1'), mult_1: val('sz_m1'), radius_2_km: val('sz_r2'), mult_2: val('sz_m2'), start_time: val('sz_st'), end_time: val('sz_et') }) });
+    loadDashboard();
+  }
+  async function toggleSurge(id) { await fetch(`${API}/api/admin/surge-zones/${id}/toggle`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
+  async function delSurge(id) { await fetch(`${API}/api/admin/surge-zones/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
+  async function toggleClass(id, field) { await fetch(`${API}/api/admin/drivers/${id}/toggle-class`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ field }) }); loadDashboard(); }
+
   async function saveSettings() {
-    const required_docs_json = {
-      BIKE: val('doc_BIKE').split(',').map(s => s.trim()).filter(Boolean),
-      CNG: val('doc_CNG').split(',').map(s => s.trim()).filter(Boolean),
-      CAR: val('doc_CAR').split(',').map(s => s.trim()).filter(Boolean),
-      XL: val('doc_XL').split(',').map(s => s.trim()).filter(Boolean)
-    };
+    const required_docs_json = { BIKE: val('doc_BIKE').split(',').map(s=>s.trim()).filter(Boolean), CNG: val('doc_CNG').split(',').map(s=>s.trim()).filter(Boolean), CAR: val('doc_CAR').split(',').map(s=>s.trim()).filter(Boolean), XL: val('doc_XL').split(',').map(s=>s.trim()).filter(Boolean) };
     await fetch(`${API}/api/admin/settings`, {
       method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
       body: JSON.stringify({
-        enable_bkash: document.getElementById('en_bkash').checked ? 'true' : 'false',
-        enable_nagad: document.getElementById('en_nagad').checked ? 'true' : 'false',
-        enable_card: document.getElementById('en_card').checked ? 'true' : 'false',
+        enable_bkash: document.getElementById('en_bkash').checked ? 'true' : 'false', enable_nagad: document.getElementById('en_nagad').checked ? 'true' : 'false', enable_card: document.getElementById('en_card').checked ? 'true' : 'false',
+        referral_bonus_amount: val('ref_bonus'), referral_target_trips: val('ref_trips'), referral_days_limit: val('ref_days'),
         required_docs_json, driver_view_radius_km: val('set_view_rad'), dispatch_radius_km: val('set_disp_rad'),
         bkash_merchant: val('set_bkash_m'), bkash_pay_link: val('set_bkash_l'), bkash_qr_url: val('set_bkash_q'),
         nagad_merchant: val('set_nagad_m'), nagad_pay_link: val('set_nagad_l'), nagad_qr_url: val('set_nagad_q'), bank_details: val('set_bank')
@@ -291,13 +389,12 @@
     alert('সব সেটিংস সেভ হয়েছে! ✅');
   }
   async function setMonthlyStatus(id, status) { await fetch(`${API}/api/admin/monthly-rentals/${id}/status`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ status }) }); loadDashboard(); }
-  async function togglePremium(id) { await fetch(`${API}/api/admin/drivers/${id}/toggle-premium`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
   async function approveDue(id) { await fetch(`${API}/api/admin/due-payments/${id}/approve`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
-  async function verifyDriver(id, status) { let reason = ''; if (status === 'REJECTED') reason = prompt('কারণ:') || 'Invalid docs'; await fetch(`${API}/api/admin/drivers/${id}/verify`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ status, reason }) }); loadDashboard(); }
+  async function verifyDriver(id, status) { let reason = ''; if (status === 'REJECTED') reason = prompt('কারণ:') || 'Invalid'; await fetch(`${API}/api/admin/drivers/${id}/verify`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ status, reason }) }); loadDashboard(); }
   async function adjustWallet(id) { const amount = prompt('কত টাকা?'); if (!amount) return; await fetch(`${API}/api/admin/drivers/${id}/wallet-adjust`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ amount }) }); loadDashboard(); }
   async function toggleUserActive(id, is_active) { await fetch(`${API}/api/admin/users/${id}/toggle-active`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ is_active }) }); loadDashboard(); }
   async function forceCancel(id) { await fetch(`${API}/api/admin/rides/${id}/force-cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
-  async function updateRate(t) { await fetch(`${API}/api/admin/rates/${t}`, { method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ base_fare: val(`b_${t}`), per_km_rate: val(`k_${t}`), per_min_rate: val(`m_${t}`), min_fare: val(`mf_${t}`), commission_percent: val(`c_${t}`) }) }); alert('আপডেট হয়েছে!'); }
+  async function updateRate(t) { await fetch(`${API}/api/admin/rates/${t}`, { method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ base_fare: val(`b_${t}`), per_km_rate: val(`k_${t}`), per_min_rate: val(`m_${t}`), min_fare: val(`mf_${t}`), commission_percent: val(`c_${t}`) }) }); alert('আপডেট!'); }
   async function createPromo() { await fetch(`${API}/api/admin/promos`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ code: val('pCode'), discount_type: val('pType'), discount_value: val('pVal') }) }); loadDashboard(); }
   async function togglePromo(id) { await fetch(`${API}/api/admin/promos/${id}/toggle`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); loadDashboard(); }
   async function createQuest() { await fetch(`${API}/api/admin/quests`, { method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`}, body: JSON.stringify({ title: val('qTitle'), target_trips: val('qTrips'), bonus_amount: val('qBonus'), start_time: new Date(), end_time: new Date(Date.now() + 7 * 86400000) }) }); loadDashboard(); }
